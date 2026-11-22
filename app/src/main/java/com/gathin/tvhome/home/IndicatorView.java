@@ -6,7 +6,7 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.view.View;
 
-/** Frosted pill: animated progress bar for the active slide, subtle dots for the others. */
+/** Frosted pill: progress bar for the active slide and dots for the rest. Not focusable. */
 public class IndicatorView extends View {
 
     private final Paint bg = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -16,7 +16,6 @@ public class IndicatorView extends View {
     private final Paint dot = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF r = new RectF();
     private final float d;
-
     private int count = 1;
     private int active;
     private float progress;
@@ -34,22 +33,9 @@ public class IndicatorView extends View {
         setFocusable(false);
     }
 
-    public void setCount(int c) {
-        count = Math.max(1, c);
-        requestLayout();
-        invalidate();
-    }
-
-    public void setActive(int i) {
-        active = i;
-        progress = 0f;
-        invalidate();
-    }
-
-    public void setProgress(float p) {
-        progress = Math.max(0f, Math.min(1f, p));
-        invalidate();
-    }
+    public void setCount(int c) { count = Math.max(1, c); requestLayout(); invalidate(); }
+    public void setActive(int i) { active = i; progress = 0f; invalidate(); }
+    public void setProgress(float p) { progress = Math.max(0f, Math.min(1f, p)); invalidate(); }
 
     private float barW() { return 30 * d; }
     private float dotD() { return 6 * d; }
@@ -57,10 +43,8 @@ public class IndicatorView extends View {
     private float padH() { return 12 * d; }
 
     @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int w = (int) (padH() * 2 + barW() + (count - 1) * (dotD() + gap()));
-        int h = (int) (34 * d);
-        setMeasuredDimension(w, h);
+    protected void onMeasure(int w, int h) {
+        setMeasuredDimension((int) (padH() * 2 + barW() + (count - 1) * (dotD() + gap())), (int) (30 * d));
     }
 
     @Override
@@ -72,7 +56,7 @@ public class IndicatorView extends View {
         canvas.drawRoundRect(r, h / 2, h / 2, rim);
         float cy = h / 2f;
         float x = padH();
-        float barH = 6 * d;
+        float barH = 5 * d;
         for (int i = 0; i < count; i++) {
             if (i == active) {
                 r.set(x, cy - barH / 2, x + barW(), cy + barH / 2);

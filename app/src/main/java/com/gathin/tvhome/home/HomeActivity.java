@@ -2,19 +2,26 @@ package com.gathin.tvhome.home;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.animation.ObjectAnimator;
+import android.animation.PropertyValuesHolder;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.graphics.Outline;
+import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
@@ -24,7 +31,6 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -37,15 +43,15 @@ import android.text.format.DateFormat;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.StyleSpan;
 import android.text.style.TypefaceSpan;
+import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
-import android.view.ViewOutlineProvider;
-import android.view.ViewTreeObserver;
 import android.view.WindowManager;
-import android.view.animation.DecelerateInterpolator;
+import android.view.animation.Interpolator;
 import android.view.animation.LinearInterpolator;
+import android.view.animation.PathInterpolator;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -56,96 +62,110 @@ import android.widget.Toast;
 
 import com.gathin.tvhome.R;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * Glassmorphic Android TV home screen.
+ * Glassmorphic Android TV home screen (v3.5).
  *
- * Layers (bottom -> top):
- *   heroLayer   : two cross-fading full-bleed artwork ImageViews + top / bottom / left scrims
- *   lowerStack  : hero overlay (logo, meta, Play, Watchlist, carousel controls),
- *                 frosted dock (5 tiles) and peeking app rows. Scrolls as one unit on D-pad.
- *   topBar      : single-line greeting (left) and 3 circular icons | divider | clock (right)
- *   menu        : Settings dropdown (frosted, focus-trapped)
- *   tooltip     : label shown under a focused top-bar icon
- *
- * D-pad navigation is resolved by an explicit row model (see {@link #moveFocus}) so focus
- * movement is deterministic and only one element is ever highlighted.
+ * Fixed layout, nothing reflows when the slide changes:
+ *   heroLayer  - full-bleed artwork (two cross-fading ImageViews) + scrims + page dim
+ *   heroInfo   - fixed-height block: title box, metadata line, Play + Watchlist
+ *   indicator  - progress pill (bottom-right of the hero), not focusable
+ *   lowerStack - dock (favourites) + all-apps rows; scrolls as one unit
+ *   header     - greeting | Inputs, Wi-Fi, Settings | clock; fades away in the app rows
+ *   menus      - Settings / Inputs / app long-press menu, all frosted and focus-trapped
  */
 public class HomeActivity extends Activity {
 
-    // ----------------------------------------------------------------- configuration
+    // ------------------------------------------------------------------ config
 
     private static final String PREFS = "glass_home";
     private static final String KEY_NAME = "user_name";
     private static final String KEY_WATCHLIST = "watchlist";
+    private static final String KEY_FAVS = "favourites";
+    private static final String KEY_DIM_HINT = "dim_hint_shown";
     private static final String DEFAULT_NAME = "Hardik";
     private static final long SLIDE_MS = 8000L;
-    private static final int STEP = 5; // slider step for D-pad left / right
-
-    /** true: always draw the branded tiles from the mockup; false: prefer the apps' own TV banners. */
-    private static final boolean STYLED_DOCK_TILES = false;
+    private static final long FADE_MS = 900L;
+    private static final int MAX_FAVS = 5;
+    private static final int STEP = 5;
 
     private static final String PKG_LIVE = "com.google.android.tv";
     private static final String PKG_NETFLIX = "com.netflix.ninja";
     private static final String PKG_PRIME = "com.amazon.amazonvideo.livingroom";
     private static final String PKG_YOUTUBE = "com.google.android.youtube.tv";
     private static final String PKG_HOTSTAR = "in.startv.hotstar";
+    private static final String[] DEFAULT_FAVS = {PKG_LIVE, PKG_NETFLIX, PKG_PRIME, PKG_YOUTUBE, PKG_HOTSTAR};
 
-    private static final String[] DOCK_PKGS = {PKG_LIVE, PKG_NETFLIX, PKG_PRIME, PKG_YOUTUBE, PKG_HOTSTAR};
+    private static final String DOT = "  \u2022  ";
 
     private final HeroItem[] items = {
             new HeroItem("anupamaa", "Anupamaa",
-                    "JioHotstar  \u2022  Family Drama  \u2022  Hindi  \u2022  New Episodes Daily",
+                    "JioHotstar" + DOT + "Family Drama" + DOT + "Hindi" + DOT + "New Episodes Daily",
                     PKG_HOTSTAR, "https://www.hotstar.com/in/shows/anupama/1260022017",
-                    R.drawable.hero_anupamaa, HeroItem.LOGO_SERIF, true),
+                    R.drawable.hero_anupamaa, true),
             new HeroItem("yrkkh", "Yeh Rishta Kya Kehlata Hai",
-                    "JioHotstar  \u2022  Romantic Family Drama  \u2022  Hindi  \u2022  New Episodes Daily",
+                    "JioHotstar" + DOT + "Romantic Family Drama" + DOT + "Hindi" + DOT + "New Episodes Daily",
                     PKG_HOTSTAR, "https://www.hotstar.com/in/shows/yeh-rishta/586",
-                    R.drawable.hero_yrkkh, HeroItem.LOGO_SERIF, true),
+                    R.drawable.hero_yrkkh, true),
             new HeroItem("syhp", "Shayad Yahi Hai Pyaar",
-                    "JioHotstar  \u2022  Romance Drama  \u2022  Hindi  \u2022  Season 1",
+                    "JioHotstar" + DOT + "Romance" + DOT + "Hindi" + DOT + "New Episodes",
                     PKG_HOTSTAR, "https://www.hotstar.com/in/shows/shayad-yahi-hai-pyaar/1271646563",
-                    R.drawable.hero_syhp, HeroItem.LOGO_BOLD, true),
+                    R.drawable.hero_syhp, true),
             new HeroItem("yft", "Yeh Fitoor Tera",
-                    "JioHotstar  \u2022  Romance Drama  \u2022  Hindi  \u2022  Season 1",
+                    "JioHotstar" + DOT + "Romance Drama" + DOT + "Hindi" + DOT + "New Episodes",
                     PKG_HOTSTAR, "https://www.hotstar.com/in/shows/yeh-fitoor-tera/1271650854",
-                    R.drawable.hero_yft, HeroItem.LOGO_BOLD, true),
-            new HeroItem("manifest", "MANIFEST",
-                    "Netflix  \u2022  4 Seasons  \u2022  Mystery Drama  \u2022  Sci-Fi",
+                    R.drawable.hero_yft, true),
+            new HeroItem("manifest", "Manifest",
+                    "Netflix" + DOT + "4 Seasons" + DOT + "Mystery Drama" + DOT + "Sci-Fi",
                     PKG_NETFLIX, "https://www.netflix.com/title/80241318",
-                    R.drawable.hero_manifest, HeroItem.LOGO_WIDE, true),
+                    R.drawable.hero_manifest, true),
+            new HeroItem("kapil", "The Great Indian Kapil Show",
+                    "Netflix" + DOT + "5 Seasons" + DOT + "Comedy Talk Show" + DOT + "Hindi",
+                    PKG_NETFLIX, "https://www.netflix.com/title/81737430",
+                    R.drawable.hero_kapil, true),
             new HeroItem("live", "Live Channels",
-                    "Live Channels App  \u2022  Live TV  \u2022  All your channels in one place",
+                    "Live Channels App" + DOT + "Live TV" + DOT + "All your channels in one place",
                     PKG_LIVE, null,
-                    R.drawable.hero_live, HeroItem.LOGO_APP, false),
+                    R.drawable.hero_live, false),
     };
 
-    // ----------------------------------------------------------------- state
+    // ------------------------------------------------------------------ motion
+
+    private static final Interpolator EASE = new PathInterpolator(0.2f, 0f, 0f, 1f);
+    private static final Interpolator EASE_IN_OUT = new PathInterpolator(0.4f, 0f, 0.2f, 1f);
+
+    // ------------------------------------------------------------------ state
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
     private AudioManager audio;
+    private Brightness brightness;
+    private final Backdrop backdrop = new Backdrop();
     private float density;
     private int screenW;
     private int screenH;
     private int margin;
 
     private FrameLayout root;
-    private FrameLayout heroLayer;
-    private ImageView artBottom;
-    private ImageView artTop;
-    private boolean topShowing;
-    private final Drawable[] artCache = new Drawable[6];
+    private ImageView artA;
+    private ImageView artB;
+    private boolean bOnTop;
     private View pageDim;
+    private final Bitmap[] artCache = new Bitmap[7];
+    private final Bitmap[] blurCache = new Bitmap[7];
 
+    private FrameLayout header;
     private TextView greeting;
     private TextView clockTime;
     private TextView clockAmPm;
@@ -156,33 +176,36 @@ public class HomeActivity extends Activity {
     private FrameLayout btnSettings;
     private View vpnDot;
 
-    private LinearLayout lowerStack;
     private LinearLayout heroInfo;
     private LinearLayout heroText;
-    private LinearLayout logoBox;
+    private TextView heroTitle;
     private TextView heroMeta;
     private LinearLayout btnPlay;
     private LinearLayout btnWatch;
     private ImageView watchIcon;
     private TextView watchLabel;
-    private FrameLayout btnPrev;
-    private FrameLayout btnNext;
     private IndicatorView indicator;
+    private int heroTop;
+    private int heroH;
+    private int titleBoxH;
+    private int titleMaxW;
 
+    private LinearLayout lowerStack;
     private FrostedPanel dock;
-    private final List<View> dockTiles = new ArrayList<>();
-    private final List<LinearLayout> extraRows = new ArrayList<>();
+    private LinearLayout dockRow;
+    private LinearLayout rowsBox;
+    private final List<TileView> dockTiles = new ArrayList<>();
+    private final List<LinearLayout> appRows = new ArrayList<>();
+    private int dockTop;
     private int tileW;
     private int tileH;
     private float tileRadius;
     private int dockPad;
     private int tileGap;
+    private int tilePad;
 
-    private FrostedPanel menu;
-    private boolean menuOpen;
-    private final List<View> menuRows = new ArrayList<>();
-    private View rowBrightness;
-    private View rowVolume;
+    private Menu activeMenu;
+    private Menu settingsMenu;
     private SliderView brightSlider;
     private SliderView volSlider;
     private TextView brightPct;
@@ -191,22 +214,40 @@ public class HomeActivity extends Activity {
 
     private int current;
     private ValueAnimator slideTimer;
-    private float baseShift = Float.NaN;
-    private int shiftedRow = -1; // index into extraRows, -1 = dock / hero visible
+    private ValueAnimator dimAnim;
+    private int shiftedRow = -1;
+    private boolean menuConfirmDown;
+    private BroadcastReceiver packageReceiver;
 
-    // ----------------------------------------------------------------- lifecycle
+    /** Frosted, focus-trapped popup. */
+    private static final class Menu {
+        FrostedPanel panel;
+        LinearLayout list;
+        final List<View> rows = new ArrayList<>();
+        final Map<View, Adjust> adjust = new HashMap<>();
+        View returnFocus;
+        boolean dynamic;
+    }
+
+    private interface Adjust {
+        void by(int delta);
+    }
+
+    // ================================================================== lifecycle
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-        density = getResources().getDisplayMetrics().density;
-        screenW = Math.max(getResources().getDisplayMetrics().widthPixels,
-                getResources().getDisplayMetrics().heightPixels);
-        screenH = Math.min(getResources().getDisplayMetrics().widthPixels,
-                getResources().getDisplayMetrics().heightPixels);
+
+        DisplayMetrics dm = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(dm);
+        density = dm.density;
+        screenW = Math.max(dm.widthPixels, dm.heightPixels);
+        screenH = Math.min(dm.widthPixels, dm.heightPixels);
         margin = Math.round(screenW * 0.0625f);
+        computeGeometry();
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -215,33 +256,30 @@ public class HomeActivity extends Activity {
         hideSystemBars();
 
         buildHeroLayer();
+        buildHeroInfo();
         buildLowerStack();
-        buildTopBar();
-        buildMenu();
+        buildHeader();
         buildTooltip();
 
-        root.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
-            @Override
-            public void onGlobalLayout() {
-                if (dock.getHeight() == 0) {
-                    return;
-                }
-                root.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                // Park the dock so its top sits at ~72% of the screen height (as in the mockup);
-                // everything below it peeks off the bottom edge.
-                baseShift = screenH * 0.725f - dock.getTop();
-                lowerStack.setTranslationY(baseShift);
-                lowerStack.setAlpha(1f);
-                showSlide(0, false);
+        View inAppDim = new View(this);
+        inAppDim.setBackgroundColor(Color.BLACK);
+        inAppDim.setAlpha(0f);
+        inAppDim.setFocusable(false);
+        root.addView(inAppDim, new FrameLayout.LayoutParams(-1, -1));
+        brightness = new Brightness(this, prefs, inAppDim);
+        brightness.reapply();
+
+        showSlide(0, false, 1);
+        preloadSlides();
+        rebuildApps(null);
+        handler.post(() -> {
+            if (!dockTiles.isEmpty()) {
                 dockTiles.get(0).requestFocus();
-                handler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        dock.capture(heroLayer);
-                    }
-                }, 150);
+            } else {
+                btnPlay.requestFocus();
             }
         });
+        registerPackageReceiver();
     }
 
     @Override
@@ -251,8 +289,7 @@ public class HomeActivity extends Activity {
         handler.removeCallbacks(ticker);
         handler.post(ticker);
         refreshVolume();
-        refreshBrightness();
-        if (slideTimer != null && !menuOpen && shiftedRow < 0) {
+        if (activeMenu == null && shiftedRow < 0) {
             resumeTimer();
         }
     }
@@ -272,6 +309,13 @@ public class HomeActivity extends Activity {
             slideTimer.removeAllListeners();
             slideTimer.cancel();
         }
+        if (packageReceiver != null) {
+            try {
+                unregisterReceiver(packageReceiver);
+            } catch (Exception ignored) {
+                // not registered
+            }
+        }
     }
 
     @Override
@@ -284,7 +328,7 @@ public class HomeActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        // Home screen: Back never leaves the launcher. Handled in dispatchKeyEvent.
+        // The home screen never finishes. Back is handled in dispatchKeyEvent.
     }
 
     private void hideSystemBars() {
@@ -297,41 +341,55 @@ public class HomeActivity extends Activity {
                         | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
-    // ----------------------------------------------------------------- hero layer
+    // ================================================================== geometry
+
+    private void computeGeometry() {
+        int contentW = screenW - 2 * margin;
+        dockPad = dp(15);
+        tileGap = dp(26);
+        tilePad = dp(9);           // room around each tile for the focus ring + glow
+        tileRadius = dp(12);
+        tileW = (contentW - 2 * dockPad - 4 * tileGap) / 5;
+        tileH = Math.round(tileW * 0.56f);
+        dockTop = Math.round(screenH * 0.70f);
+
+        titleBoxH = dp(86);
+        titleMaxW = Math.round(screenW * 0.56f);
+        heroH = titleBoxH + dp(8) + dp(20) + dp(22) + dp(42);
+        heroTop = dockTop - dp(28) - heroH;
+    }
+
+    // ================================================================== hero art
 
     private void buildHeroLayer() {
-        heroLayer = new FrameLayout(this);
-        root.addView(heroLayer, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout layer = new FrameLayout(this);
+        root.addView(layer, new FrameLayout.LayoutParams(-1, -1));
 
-        artBottom = newArt();
-        artTop = newArt();
-        artTop.setAlpha(0f);
-        heroLayer.addView(artBottom, new FrameLayout.LayoutParams(-1, -1));
-        heroLayer.addView(artTop, new FrameLayout.LayoutParams(-1, -1));
+        artA = newArt();
+        artB = newArt();
+        artB.setAlpha(0f);
+        layer.addView(artA, new FrameLayout.LayoutParams(-1, -1));
+        layer.addView(artB, new FrameLayout.LayoutParams(-1, -1));
 
-        // Top-edge scrim: keeps greeting, icons and clock legible on bright skies.
         View top = new View(this);
         top.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{0xB3000000, 0x4D000000, 0x00000000}));
-        heroLayer.addView(top, new FrameLayout.LayoutParams(-1, (int) (screenH * 0.30f), Gravity.TOP));
+        layer.addView(top, new FrameLayout.LayoutParams(-1, Math.round(screenH * 0.28f), Gravity.TOP));
 
-        // Left scrim behind the title / metadata block.
         View left = new View(this);
         left.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{0x99000000, 0x33000000, 0x00000000}));
-        heroLayer.addView(left, new FrameLayout.LayoutParams((int) (screenW * 0.62f), -1, Gravity.START));
+                new int[]{0xA6000000, 0x40000000, 0x00000000}));
+        layer.addView(left, new FrameLayout.LayoutParams(Math.round(screenW * 0.62f), -1, Gravity.START));
 
-        // Bottom-third scrim behind the buttons, dock and peeking row.
         View bottom = new View(this);
         bottom.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
-                new int[]{0xF2000000, 0xB3000000, 0x40000000, 0x00000000}));
-        heroLayer.addView(bottom, new FrameLayout.LayoutParams(-1, (int) (screenH * 0.62f), Gravity.BOTTOM));
+                new int[]{0xF2000000, 0xBF000000, 0x40000000, 0x00000000}));
+        layer.addView(bottom, new FrameLayout.LayoutParams(-1, Math.round(screenH * 0.60f), Gravity.BOTTOM));
 
-        // Extra dim used when the user scrolls down into the app rows.
         pageDim = new View(this);
         pageDim.setBackgroundColor(Color.BLACK);
         pageDim.setAlpha(0f);
-        heroLayer.addView(pageDim, new FrameLayout.LayoutParams(-1, -1));
+        layer.addView(pageDim, new FrameLayout.LayoutParams(-1, -1));
     }
 
     private ImageView newArt() {
@@ -341,112 +399,266 @@ public class HomeActivity extends Activity {
         return iv;
     }
 
-    private Drawable art(int index) {
-        if (artCache[index] == null) {
-            artCache[index] = getResources().getDrawable(items[index].artRes, getTheme());
+    /**
+     * Artwork for slide i. A file named {@code <id>.jpg} / {@code <id>.png} in
+     * Android/data/com.gathin.tvhome/files/hero/ overrides the bundled image, so official
+     * posters you have rights to can be dropped in without rebuilding.
+     */
+    private Bitmap loadArt(int i) {
+        File dir = getExternalFilesDir("hero");
+        if (dir != null) {
+            for (String ext : new String[]{".jpg", ".jpeg", ".png", ".webp"}) {
+                File f = new File(dir, items[i].id + ext);
+                if (f.isFile()) {
+                    Bitmap b = decodeFile(f);
+                    if (b != null) {
+                        return b;
+                    }
+                }
+            }
         }
-        return artCache[index];
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inPreferredConfig = Bitmap.Config.RGB_565;
+        return BitmapFactory.decodeResource(getResources(), items[i].artRes, o);
     }
 
-    private void showSlide(int index, boolean animate) {
+    private Bitmap decodeFile(File f) {
+        BitmapFactory.Options b = new BitmapFactory.Options();
+        b.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getAbsolutePath(), b);
+        int sample = 1;
+        while (b.outWidth / (sample * 2) >= screenW) {
+            sample *= 2;
+        }
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inSampleSize = sample;
+        o.inPreferredConfig = Bitmap.Config.RGB_565;
+        return BitmapFactory.decodeFile(f.getAbsolutePath(), o);
+    }
+
+    private Bitmap makeBlur(Bitmap art) {
+        int w = Math.max(16, screenW / 10);
+        int h = Math.max(9, screenH / 10);
+        // centre-crop to the screen aspect, like the ImageView does
+        float scale = Math.max(w / (float) art.getWidth(), h / (float) art.getHeight());
+        int cw = Math.round(w / scale);
+        int ch = Math.round(h / scale);
+        int cx = Math.max(0, (art.getWidth() - cw) / 2);
+        int cy = Math.max(0, (art.getHeight() - ch) / 2);
+        Bitmap crop = Bitmap.createBitmap(art, cx, cy, Math.min(cw, art.getWidth()), Math.min(ch, art.getHeight()));
+        Bitmap small = Bitmap.createScaledBitmap(crop, w, h, true).copy(Bitmap.Config.ARGB_8888, false);
+        return Backdrop.blur(small, 3);
+    }
+
+    private synchronized Bitmap art(int i) {
+        if (artCache[i] == null) {
+            artCache[i] = loadArt(i);
+        }
+        return artCache[i];
+    }
+
+    private synchronized Bitmap blurred(int i) {
+        if (blurCache[i] == null) {
+            Bitmap a = art(i);
+            if (a != null) {
+                blurCache[i] = makeBlur(a);
+            }
+        }
+        return blurCache[i];
+    }
+
+    private void preloadSlides() {
+        Thread t = new Thread(() -> {
+            for (int i = 0; i < items.length; i++) {
+                blurred(i);
+            }
+        }, "hero-preload");
+        t.setPriority(Thread.MIN_PRIORITY);
+        t.start();
+    }
+
+    // ================================================================== hero info
+
+    private void buildHeroInfo() {
+        heroInfo = new LinearLayout(this);
+        heroInfo.setOrientation(LinearLayout.VERTICAL);
+        heroInfo.setClipChildren(false);
+        heroInfo.setClipToPadding(false);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.round(screenW * 0.62f), heroH,
+                Gravity.TOP | Gravity.START);
+        lp.leftMargin = margin;
+        lp.topMargin = heroTop;
+        root.addView(heroInfo, lp);
+
+        heroText = new LinearLayout(this);
+        heroText.setOrientation(LinearLayout.VERTICAL);
+        heroInfo.addView(heroText, new LinearLayout.LayoutParams(-1, titleBoxH + dp(8) + dp(20)));
+
+        // One typeface for every title: heavy sans, upper-case, auto-fit into a fixed box.
+        heroTitle = new TextView(this);
+        heroTitle.setTextColor(Color.WHITE);
+        heroTitle.setTypeface(Typeface.create("sans-serif-black", Typeface.BOLD));
+        heroTitle.setAllCaps(true);
+        heroTitle.setLetterSpacing(0.015f);
+        heroTitle.setIncludeFontPadding(false);
+        heroTitle.setGravity(Gravity.BOTTOM | Gravity.START);
+        heroTitle.setShadowLayer(18 * density, 0, 2 * density, 0x8C000000);
+        heroTitle.setLineSpacing(0f, 0.92f);
+        heroText.addView(heroTitle, new LinearLayout.LayoutParams(titleMaxW, titleBoxH));
+
+        heroMeta = new TextView(this);
+        heroMeta.setTextColor(0xD9FFFFFF);
+        heroMeta.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        heroMeta.setSingleLine(true);
+        heroMeta.setEllipsize(TextUtils.TruncateAt.END);
+        heroMeta.setShadowLayer(6 * density, 0, density, 0x99000000);
+        heroMeta.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-1, dp(20));
+        mlp.topMargin = dp(8);
+        heroText.addView(heroMeta, mlp);
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setClipChildren(false);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(-2, dp(42));
+        blp.topMargin = dp(22);
+        heroInfo.addView(buttons, blp);
+
+        btnPlay = pill();
+        final ImageView playIcon = icon(R.drawable.ic_h_play, 20);
+        playIcon.setColorFilter(0xFF111111, PorterDuff.Mode.SRC_IN);
+        btnPlay.addView(playIcon);
+        btnPlay.addView(pillText("Play", 0xFF111111));
+        btnPlay.setBackground(pillBg(0xEBFFFFFF, 0));
+        buttons.addView(btnPlay, new LinearLayout.LayoutParams(-2, -1));
+        btnPlay.setOnClickListener(v -> launchHero(items[current]));
+        btnPlay.setOnFocusChangeListener((v, f) -> {
+            v.setBackground(pillBg(f ? 0xFFFFFFFF : 0xEBFFFFFF, 0));
+            focusScale(v, f, 1.08f);
+        });
+
+        btnWatch = pill();
+        watchIcon = icon(R.drawable.ic_h_check, 18);
+        btnWatch.addView(watchIcon);
+        watchLabel = pillText("Watchlist", Color.WHITE);
+        btnWatch.addView(watchLabel);
+        btnWatch.setBackground(pillBg(0x4D1A1A1E, 0x40FFFFFF));
+        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(-2, -1);
+        wlp.leftMargin = dp(12);
+        buttons.addView(btnWatch, wlp);
+        btnWatch.setOnClickListener(v -> toggleWatchlist(items[current]));
+        btnWatch.setOnFocusChangeListener((v, f) -> {
+            v.setBackground(f ? pillBg(0xFFFFFFFF, 0) : pillBg(0x4D1A1A1E, 0x40FFFFFF));
+            int ink = f ? 0xFF111111 : Color.WHITE;
+            watchIcon.setColorFilter(ink, PorterDuff.Mode.SRC_IN);
+            watchLabel.setTextColor(ink);
+            focusScale(v, f, 1.08f);
+        });
+
+        indicator = new IndicatorView(this);
+        indicator.setCount(items.length);
+        FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        ilp.rightMargin = margin;
+        ilp.topMargin = heroTop + heroH - dp(42) + (dp(42) - dp(30)) / 2;
+        root.addView(indicator, ilp);
+    }
+
+    private void showSlide(int index, boolean animate, final int direction) {
         current = (index + items.length) % items.length;
         final HeroItem item = items[current];
+        Bitmap bmp = art(current);
 
-        // Cross-fade artwork with a slow Ken Burns settle.
+        // artB sits above artA. Bring the new art in by fading B in, or by placing it in A
+        // and fading B out - z-order never changes, so nothing re-lays out mid-animation.
         final ImageView incoming;
+        artB.animate().cancel();
         if (!animate) {
-            artBottom.setImageDrawable(art(current));
-            artTop.setAlpha(0f);
-            topShowing = false;
-            incoming = artBottom;
-        } else if (!topShowing) {
-            artTop.setImageDrawable(art(current));
-            artTop.animate().alpha(1f).setDuration(750).setListener(null).start();
-            topShowing = true;
-            incoming = artTop;
+            artA.setImageBitmap(bmp);
+            artB.setAlpha(0f);
+            bOnTop = false;
+            incoming = artA;
+        } else if (!bOnTop) {
+            artB.setImageBitmap(bmp);
+            artB.animate().alpha(1f).setDuration(FADE_MS).setInterpolator(EASE_IN_OUT).withLayer().start();
+            bOnTop = true;
+            incoming = artB;
         } else {
-            artBottom.setImageDrawable(art(current));
-            artBottom.setAlpha(1f);
-            artTop.animate().alpha(0f).setDuration(750).setListener(null).start();
-            topShowing = false;
-            incoming = artBottom;
+            artA.setImageBitmap(bmp);
+            artB.animate().alpha(0f).setDuration(FADE_MS).setInterpolator(EASE_IN_OUT).withLayer().start();
+            bOnTop = false;
+            incoming = artA;
         }
-        incoming.setScaleX(1.06f);
-        incoming.setScaleY(1.06f);
-        incoming.animate().scaleX(1f).scaleY(1f).setDuration(SLIDE_MS + 1500)
-                .setInterpolator(new DecelerateInterpolator()).start();
+        kenBurns(incoming);
 
-        // Swap the overlay text.
+        backdrop.show(blurred(current), animate ? FADE_MS : 0);
+
         if (animate) {
-            heroText.animate().alpha(0f).translationX(-12 * density).setDuration(160)
-                    .setListener(new AnimatorListenerAdapter() {
-                        @Override
-                        public void onAnimationEnd(Animator animation) {
-                            heroText.animate().setListener(null);
-                            fillHero(item);
-                            heroText.setTranslationX(24 * density);
-                            heroText.animate().alpha(1f).translationX(0f).setDuration(420)
-                                    .setInterpolator(new DecelerateInterpolator()).start();
-                        }
+            final float shift = 28 * density * direction;
+            heroText.animate().cancel();
+            heroText.animate().alpha(0f).translationX(-shift * 0.6f).setDuration(200)
+                    .setInterpolator(EASE_IN_OUT).withLayer()
+                    .withEndAction(() -> {
+                        fillHero(item);
+                        heroText.setTranslationX(shift);
+                        heroText.animate().alpha(1f).translationX(0f).setDuration(520)
+                                .setInterpolator(EASE).withLayer().start();
                     }).start();
         } else {
             fillHero(item);
         }
-
+        updateWatchVisibility(item, animate);
         indicator.setActive(current);
         restartTimer();
+    }
 
-        // Re-sample the frosted dock / menu once the new artwork has settled.
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                dock.capture(heroLayer);
-                if (menuOpen) {
-                    menu.capture(heroLayer);
-                }
-            }
-        }, animate ? 820 : 80);
+    /** Slow, linear Ken Burns settle, independent of the cross-fade. */
+    private void kenBurns(ImageView v) {
+        Object old = v.getTag();
+        if (old instanceof ObjectAnimator) {
+            ((ObjectAnimator) old).cancel();
+        }
+        ObjectAnimator kb = ObjectAnimator.ofPropertyValuesHolder(v,
+                PropertyValuesHolder.ofFloat(View.SCALE_X, 1.045f, 1f),
+                PropertyValuesHolder.ofFloat(View.SCALE_Y, 1.045f, 1f));
+        kb.setDuration(SLIDE_MS + FADE_MS);
+        kb.setInterpolator(new LinearInterpolator());
+        kb.start();
+        v.setTag(kb);
     }
 
     private void fillHero(HeroItem item) {
-        logoBox.removeAllViews();
-        TextView logo = new TextView(this);
-        logo.setTextColor(Color.WHITE);
-        logo.setShadowLayer(18 * density, 0, 2 * density, 0x99000000);
-        logo.setIncludeFontPadding(false);
-        logo.setMaxLines(2);
-        logo.setText(item.title);
-        switch (item.logoStyle) {
-            case HeroItem.LOGO_WIDE:
-                logo.setTypeface(Typeface.create("sans-serif-black", Typeface.BOLD));
-                logo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 64);
-                logo.setLetterSpacing(0.03f);
-                break;
-            case HeroItem.LOGO_SERIF:
-                logo.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD));
-                logo.setTextSize(TypedValue.COMPLEX_UNIT_SP, item.title.length() > 14 ? 42 : 56);
-                break;
-            case HeroItem.LOGO_APP:
-                ImageView tv = new ImageView(this);
-                tv.setImageResource(R.drawable.ic_h_tv);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(48), dp(48));
-                lp.rightMargin = dp(14);
-                logoBox.addView(tv, lp);
-                logo.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-                logo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 48);
-                break;
-            default:
-                logo.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
-                logo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 50);
-                logo.setLetterSpacing(0.01f);
-                break;
-        }
-        logoBox.addView(logo, new LinearLayout.LayoutParams(-2, -2));
         heroMeta.setText(item.meta);
-
+        fitTitle(item.title);
         if (item.watchlist) {
-            btnWatch.setVisibility(View.VISIBLE);
             updateWatchButton();
+        }
+    }
+
+    /** Largest size (56sp -> 30sp) that fits one line; at 30sp allow two lines. Box never resizes. */
+    private void fitTitle(String title) {
+        String t = title.toUpperCase(Locale.getDefault());
+        Paint p = new Paint(heroTitle.getPaint());
+        float sp = 56f;
+        float scaled = getResources().getDisplayMetrics().scaledDensity;
+        while (sp > 30f) {
+            p.setTextSize(sp * scaled);
+            if (p.measureText(t) <= titleMaxW) {
+                break;
+            }
+            sp -= 2f;
+        }
+        heroTitle.setMaxLines(sp > 30f ? 1 : 2);
+        heroTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        heroTitle.setText(title);
+    }
+
+    private void updateWatchVisibility(HeroItem item, boolean animate) {
+        if (item.watchlist) {
+            if (btnWatch.getVisibility() != View.VISIBLE) {
+                btnWatch.setVisibility(View.VISIBLE);
+                btnWatch.setAlpha(0f);
+                btnWatch.animate().alpha(1f).setDuration(animate ? 360 : 0).start();
+            }
         } else {
             if (btnWatch.hasFocus()) {
                 btnPlay.requestFocus();
@@ -455,7 +667,7 @@ public class HomeActivity extends Activity {
         }
     }
 
-    // ----------------------------------------------------------------- auto-scroll timer
+    // ================================================================== auto-advance
 
     private void restartTimer() {
         if (slideTimer != null) {
@@ -465,12 +677,7 @@ public class HomeActivity extends Activity {
         slideTimer = ValueAnimator.ofFloat(0f, 1f);
         slideTimer.setDuration(SLIDE_MS);
         slideTimer.setInterpolator(new LinearInterpolator());
-        slideTimer.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
-            @Override
-            public void onAnimationUpdate(ValueAnimator a) {
-                indicator.setProgress((Float) a.getAnimatedValue());
-            }
-        });
+        slideTimer.addUpdateListener(a -> indicator.setProgress((Float) a.getAnimatedValue()));
         slideTimer.addListener(new AnimatorListenerAdapter() {
             private boolean cancelled;
 
@@ -482,12 +689,12 @@ public class HomeActivity extends Activity {
             @Override
             public void onAnimationEnd(Animator animation) {
                 if (!cancelled) {
-                    showSlide(current + 1, true);
+                    showSlide(current + 1, true, 1);
                 }
             }
         });
         slideTimer.start();
-        if (menuOpen || shiftedRow >= 0) {
+        if (activeMenu != null || shiftedRow >= 0) {
             slideTimer.pause();
         }
     }
@@ -504,267 +711,98 @@ public class HomeActivity extends Activity {
         }
     }
 
-    // ----------------------------------------------------------------- lower stack
+    // ================================================================== dock + rows
 
     private void buildLowerStack() {
         lowerStack = new LinearLayout(this) {
             @Override
-            protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-                // Let the stack grow past the screen so additional rows can peek / scroll in.
-                super.onMeasure(widthMeasureSpec,
-                        MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+            protected void onMeasure(int w, int h) {
+                super.onMeasure(w, MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
             }
         };
         lowerStack.setOrientation(LinearLayout.VERTICAL);
         lowerStack.setClipChildren(false);
         lowerStack.setClipToPadding(false);
         lowerStack.setPadding(margin, 0, margin, 0);
-        lowerStack.setAlpha(0f);
-        root.addView(lowerStack, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
+        lp.topMargin = dockTop;
+        root.addView(lowerStack, lp);
 
-        computeTileGeometry();
-        buildHeroInfo();
-        buildDock();
-        buildExtraRows();
-    }
-
-    private void computeTileGeometry() {
-        int contentW = screenW - 2 * margin;
-        dockPad = dp(15);
-        tileGap = dp(26);
-        tileRadius = dp(12);
-        tileW = (contentW - 2 * dockPad - 4 * tileGap) / 5;
-        tileH = Math.round(tileW * 0.55f);
-    }
-
-    private void buildHeroInfo() {
-        heroInfo = new LinearLayout(this);
-        heroInfo.setOrientation(LinearLayout.HORIZONTAL);
-        heroInfo.setGravity(Gravity.BOTTOM);
-        heroInfo.setClipChildren(false);
-        lowerStack.addView(heroInfo, new LinearLayout.LayoutParams(-1, -2));
-
-        heroText = new LinearLayout(this);
-        heroText.setOrientation(LinearLayout.VERTICAL);
-        heroText.setClipChildren(false);
-        heroInfo.addView(heroText, new LinearLayout.LayoutParams(0, -2, 1f));
-
-        logoBox = new LinearLayout(this);
-        logoBox.setOrientation(LinearLayout.HORIZONTAL);
-        logoBox.setGravity(Gravity.CENTER_VERTICAL);
-        heroText.addView(logoBox, new LinearLayout.LayoutParams(-2, -2));
-
-        heroMeta = new TextView(this);
-        heroMeta.setTextColor(0xD9FFFFFF);
-        heroMeta.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        heroMeta.setSingleLine(true);
-        heroMeta.setEllipsize(TextUtils.TruncateAt.END);
-        heroMeta.setShadowLayer(6 * density, 0, density, 0x99000000);
-        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-2, -2);
-        mlp.topMargin = dp(8);
-        heroText.addView(heroMeta, mlp);
-
-        LinearLayout buttons = new LinearLayout(this);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.setClipChildren(false);
-        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(-2, -2);
-        blp.topMargin = dp(20);
-        heroText.addView(buttons, blp);
-
-        // Solid white "Play" pill.
-        btnPlay = pill(true);
-        ImageView playIcon = icon(R.drawable.ic_h_play, 20);
-        playIcon.setColorFilter(0xFF111111, PorterDuff.Mode.SRC_IN);
-        btnPlay.addView(playIcon);
-        TextView playText = pillText("Play", 0xFF111111);
-        btnPlay.addView(playText);
-        buttons.addView(btnPlay, new LinearLayout.LayoutParams(-2, dp(40)));
-        btnPlay.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                launchHero(items[current]);
-            }
-        });
-        btnPlay.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean f) {
-                v.animate().scaleX(f ? 1.1f : 1f).scaleY(f ? 1.1f : 1f).setDuration(160).start();
-                v.setElevation(f ? dp(10) : 0);
-            }
-        });
-
-        // Dark frosted "Watchlist" toggle pill.
-        btnWatch = pill(false);
-        watchIcon = icon(R.drawable.ic_h_check, 18);
-        btnWatch.addView(watchIcon);
-        watchLabel = pillText("Watchlist", Color.WHITE);
-        btnWatch.addView(watchLabel);
-        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(-2, dp(40));
-        wlp.leftMargin = dp(12);
-        buttons.addView(btnWatch, wlp);
-        btnWatch.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                toggleWatchlist(items[current]);
-            }
-        });
-        btnWatch.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean f) {
-                v.setBackground(frostedPill(f));
-                v.animate().scaleX(f ? 1.1f : 1f).scaleY(f ? 1.1f : 1f).setDuration(160).start();
-            }
-        });
-
-        // Carousel controls: circle  |  progress pill  |  circle
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(LinearLayout.HORIZONTAL);
-        controls.setGravity(Gravity.CENTER_VERTICAL);
-        controls.setClipChildren(false);
-        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-2, dp(40));
-        heroInfo.addView(controls, clp);
-
-        btnPrev = circleButton(R.drawable.ic_h_chevron_left, 34, 20);
-        controls.addView(btnPrev);
-        indicator = new IndicatorView(this);
-        indicator.setCount(items.length);
-        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(-2, -2);
-        ilp.leftMargin = dp(12);
-        ilp.rightMargin = dp(12);
-        controls.addView(indicator, ilp);
-        btnNext = circleButton(R.drawable.ic_h_chevron_right, 34, 20);
-        controls.addView(btnNext);
-
-        btnPrev.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                showSlide(current - 1, true);
-            }
-        });
-        btnNext.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                showSlide(current + 1, true);
-            }
-        });
-    }
-
-    private LinearLayout pill(boolean solidWhite) {
-        LinearLayout p = new LinearLayout(this);
-        p.setOrientation(LinearLayout.HORIZONTAL);
-        p.setGravity(Gravity.CENTER_VERTICAL);
-        p.setPadding(dp(18), 0, dp(22), 0);
-        p.setFocusable(true);
-        p.setClickable(true);
-        if (solidWhite) {
-            GradientDrawable g = new GradientDrawable();
-            g.setColor(Color.WHITE);
-            g.setCornerRadius(dp(20));
-            p.setBackground(g);
-        } else {
-            p.setBackground(frostedPill(false));
-        }
-        return p;
-    }
-
-    private GradientDrawable frostedPill(boolean focused) {
-        GradientDrawable g = new GradientDrawable();
-        g.setCornerRadius(dp(20));
-        g.setColor(focused ? 0x59FFFFFF : 0x4D1A1A1E);
-        g.setStroke(focused ? dp(2) : Math.max(1, dp(1)), focused ? 0xFFFFFFFF : 0x40FFFFFF);
-        return g;
-    }
-
-    private TextView pillText(String s, int color) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextColor(color);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        t.setPadding(dp(8), 0, 0, 0);
-        return t;
-    }
-
-    private ImageView icon(int res, int sizeDp) {
-        ImageView iv = new ImageView(this);
-        iv.setImageResource(res);
-        iv.setLayoutParams(new LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp)));
-        return iv;
-    }
-
-    /** Strict 1:1 circular frosted button. Focus = solid white disc with dark glyph. */
-    private FrameLayout circleButton(int iconRes, int sizeDp, int iconDp) {
-        final FrameLayout b = new FrameLayout(this);
-        b.setLayoutParams(new LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp)));
-        b.setFocusable(true);
-        b.setClickable(true);
-        b.setClipChildren(false);
-        b.setBackground(circleBg(false));
-        final ImageView iv = new ImageView(this);
-        iv.setImageResource(iconRes);
-        b.addView(iv, new FrameLayout.LayoutParams(dp(iconDp), dp(iconDp), Gravity.CENTER));
-        b.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean f) {
-                b.setBackground(circleBg(f));
-                if (f) {
-                    iv.setColorFilter(0xFF111111, PorterDuff.Mode.SRC_IN);
-                } else {
-                    iv.clearColorFilter();
-                }
-                b.animate().scaleX(f ? 1.12f : 1f).scaleY(f ? 1.12f : 1f).setDuration(150).start();
-                onTopIconFocus(b, f);
-            }
-        });
-        return b;
-    }
-
-    private GradientDrawable circleBg(boolean focused) {
-        GradientDrawable g = new GradientDrawable();
-        g.setShape(GradientDrawable.OVAL);
-        g.setColor(focused ? 0xF2FFFFFF : 0x40303036);
-        g.setStroke(Math.max(1, dp(1)), focused ? 0xFFFFFFFF : 0x40FFFFFF);
-        return g;
-    }
-
-    // ----------------------------------------------------------------- dock & rows
-
-    private void buildDock() {
         dock = new FrostedPanel(this);
+        dock.attach(backdrop, screenW, screenH);
         dock.setCornerRadius(tileRadius + dockPad); // concentric: outer = inner + padding
-        dock.setTint(0x66141418);
+        dock.setTint(0x59141418);
         dock.setRim(0x2EFFFFFF, Math.max(1f, density));
-        dock.setPadding(dockPad, dockPad, dockPad, dockPad);
-        dock.setClipChildren(false);
-        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(-1, tileH + 2 * dockPad);
-        dlp.topMargin = dp(24);
-        lowerStack.addView(dock, dlp);
+        int inner = dockPad - tilePad;
+        dock.setPadding(inner, inner, inner, inner);
+        lowerStack.addView(dock, new LinearLayout.LayoutParams(-1, tileH + 2 * dockPad));
 
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setClipChildren(false);
-        dock.addView(row, new FrameLayout.LayoutParams(-1, -1));
+        dockRow = new LinearLayout(this);
+        dockRow.setOrientation(LinearLayout.HORIZONTAL);
+        dockRow.setClipChildren(false);
+        dockRow.setClipToPadding(false);
+        dock.addView(dockRow, new FrameLayout.LayoutParams(-1, -1));
 
-        PackageManager pm = getPackageManager();
-        for (int i = 0; i < DOCK_PKGS.length; i++) {
-            String pkg = DOCK_PKGS[i];
-            Drawable banner = STYLED_DOCK_TILES ? null : bannerFor(pm, pkg);
-            View content = banner != null ? bannerView(banner) : styledTile(pkg);
-            FrameLayout tile = tile(content, pkg, null);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(tileW, tileH);
-            if (i > 0) {
-                lp.leftMargin = tileGap;
-            }
-            row.addView(tile, lp);
-            dockTiles.add(tile);
-        }
+        rowsBox = new LinearLayout(this);
+        rowsBox.setOrientation(LinearLayout.VERTICAL);
+        rowsBox.setClipChildren(false);
+        rowsBox.setClipToPadding(false);
+        lowerStack.addView(rowsBox, new LinearLayout.LayoutParams(-1, -2));
     }
 
-    private void buildExtraRows() {
+    private List<String> favourites() {
+        String raw = prefs.getString(KEY_FAVS, null);
+        List<String> out = new ArrayList<>();
+        if (raw == null) {
+            out.addAll(Arrays.asList(DEFAULT_FAVS));
+        } else if (!raw.isEmpty()) {
+            out.addAll(Arrays.asList(raw.split(",")));
+        }
+        return out;
+    }
+
+    private void saveFavourites(List<String> favs) {
+        prefs.edit().putString(KEY_FAVS, TextUtils.join(",", favs)).apply();
+    }
+
+    /** Rebuild dock (favourites) and the app rows. Keeps focus on {@code focusPkg} if given. */
+    private void rebuildApps(String focusPkg) {
         PackageManager pm = getPackageManager();
+        dockRow.removeAllViews();
+        dockTiles.clear();
+        rowsBox.removeAllViews();
+        appRows.clear();
+
+        List<String> favs = favourites();
+        int slot = 0;
+        for (String pkg : favs) {
+            if (slot >= MAX_FAVS) {
+                break;
+            }
+            ComponentName cn = launchComponent(pm, pkg);
+            TileView t = makeTile(pkg, cn, tileContent(pm, pkg, cn));
+            dockRow.addView(t, tileParams(slot));
+            dockTiles.add(t);
+            slot++;
+        }
+        for (; slot < MAX_FAVS; slot++) {
+            FrameLayout empty = new FrameLayout(this);
+            View ghost = new View(this);
+            GradientDrawable g = new GradientDrawable();
+            g.setCornerRadius(tileRadius);
+            g.setColor(0x0DFFFFFF);
+            g.setStroke(Math.max(1, dp(1)), 0x1AFFFFFF);
+            ghost.setBackground(g);
+            FrameLayout.LayoutParams glp = new FrameLayout.LayoutParams(-1, -1);
+            glp.setMargins(tilePad, tilePad, tilePad, tilePad);
+            empty.addView(ghost, glp);
+            dockRow.addView(empty, tileParams(slot));
+        }
+
+        // All other TV apps, in rows of 5 that share the dock's exact column grid.
         Intent q = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
         List<ResolveInfo> found = pm.queryIntentActivities(q, 0);
-        Set<String> skip = new HashSet<>(Arrays.asList(DOCK_PKGS));
+        Set<String> skip = new HashSet<>(favs);
         skip.add(getPackageName());
         final List<ResolveInfo> apps = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -774,9 +812,8 @@ public class HomeActivity extends Activity {
                 apps.add(ri);
             }
         }
-        final PackageManager fpm = pm;
-        Collections.sort(apps, (a, b) -> String.valueOf(a.loadLabel(fpm))
-                .compareToIgnoreCase(String.valueOf(b.loadLabel(fpm))));
+        Collections.sort(apps, (a, b) -> String.valueOf(a.loadLabel(pm))
+                .compareToIgnoreCase(String.valueOf(b.loadLabel(pm))));
 
         LinearLayout row = null;
         for (int i = 0; i < apps.size(); i++) {
@@ -784,66 +821,133 @@ public class HomeActivity extends Activity {
                 row = new LinearLayout(this);
                 row.setOrientation(LinearLayout.HORIZONTAL);
                 row.setClipChildren(false);
-                // Same left inset as the dock interior so the columns line up exactly.
-                row.setPadding(dockPad, 0, dockPad, 0);
-                LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, tileH);
-                rlp.topMargin = extraRows.isEmpty() ? dp(20) : tileGap;
-                lowerStack.addView(row, rlp);
-                extraRows.add(row);
+                row.setClipToPadding(false);
+                row.setPadding(dockPad - tilePad, 0, dockPad - tilePad, 0);
+                LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, tileH + 2 * tilePad);
+                rlp.topMargin = appRows.isEmpty() ? dp(22) - tilePad : tileGap - 2 * tilePad;
+                rowsBox.addView(row, rlp);
+                appRows.add(row);
             }
-            ResolveInfo ri = apps.get(i);
-            ActivityInfo ai = ri.activityInfo;
-            Drawable banner = ai.loadBanner(pm);
-            if (banner == null) {
-                banner = ai.applicationInfo.loadBanner(pm);
-            }
-            View content = banner != null ? bannerView(banner)
-                    : iconTile(ri.loadIcon(pm), String.valueOf(ri.loadLabel(pm)));
+            ActivityInfo ai = apps.get(i).activityInfo;
             ComponentName cn = new ComponentName(ai.packageName, ai.name);
-            FrameLayout tile = tile(content, ai.packageName, cn);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(tileW, tileH);
-            if (i % 5 > 0) {
-                lp.leftMargin = tileGap;
-            }
-            row.addView(tile, lp);
+            row.addView(makeTile(ai.packageName, cn, tileContent(pm, ai.packageName, cn)), tileParams(i % 5));
         }
-        // Bottom breathing room when the last row is scrolled into view.
         View spacer = new View(this);
-        lowerStack.addView(spacer, new LinearLayout.LayoutParams(1, (int) (screenH * 0.2f)));
+        rowsBox.addView(spacer, new LinearLayout.LayoutParams(1, Math.round(screenH * 0.5f)));
+
+        if (focusPkg != null) {
+            handler.post(() -> {
+                View t = findTile(focusPkg);
+                if (t != null) {
+                    t.requestFocus();
+                    syncScrollToFocus();
+                } else if (!dockTiles.isEmpty()) {
+                    dockTiles.get(0).requestFocus();
+                    scrollToRow(-1);
+                }
+            });
+        }
     }
 
-    private Drawable bannerFor(PackageManager pm, String pkg) {
-        try {
-            Intent li = pm.getLeanbackLaunchIntentForPackage(pkg);
-            if (li != null && li.getComponent() != null) {
-                Drawable d = pm.getActivityBanner(li.getComponent());
-                if (d != null) {
-                    return d;
+    private LinearLayout.LayoutParams tileParams(int col) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(tileW + 2 * tilePad, tileH + 2 * tilePad);
+        if (col > 0) {
+            lp.leftMargin = tileGap - 2 * tilePad;
+        }
+        return lp;
+    }
+
+    private TileView makeTile(final String pkg, final ComponentName cn, View content) {
+        final TileView t = new TileView(this, pkg, content, tileRadius, tilePad);
+        t.setOnClickListener(v -> {
+            if (cn != null) {
+                Intent i = new Intent(Intent.ACTION_MAIN).setComponent(cn)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                if (tryStart(i)) {
+                    return;
                 }
             }
-            return pm.getApplicationBanner(pkg);
-        } catch (Exception e) {
-            return null;
-        }
+            launchApp(pkg);
+        });
+        t.setOnLongClickListener(v -> {
+            openAppMenu(t);
+            return true;
+        });
+        return t;
     }
 
-    private View bannerView(Drawable banner) {
-        ImageView iv = new ImageView(this);
-        iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        iv.setImageDrawable(banner);
-        return iv;
+    private TileView findTile(String pkg) {
+        for (TileView t : dockTiles) {
+            if (t.pkg.equals(pkg)) {
+                return t;
+            }
+        }
+        for (LinearLayout r : appRows) {
+            for (int i = 0; i < r.getChildCount(); i++) {
+                View c = r.getChildAt(i);
+                if (c instanceof TileView && ((TileView) c).pkg.equals(pkg)) {
+                    return (TileView) c;
+                }
+            }
+        }
+        return null;
+    }
+
+    private ComponentName launchComponent(PackageManager pm, String pkg) {
+        Intent i = pm.getLeanbackLaunchIntentForPackage(pkg);
+        if (i == null) {
+            i = pm.getLaunchIntentForPackage(pkg);
+        }
+        return i != null ? i.getComponent() : null;
+    }
+
+    /** Custom branded art for the 5 default favourites; the app's TV banner for everything else. */
+    private View tileContent(PackageManager pm, String pkg, ComponentName cn) {
+        View styled = styledTile(pkg);
+        if (styled != null) {
+            return styled;
+        }
+        Drawable banner = null;
+        try {
+            if (cn != null) {
+                banner = pm.getActivityBanner(cn);
+            }
+            if (banner == null) {
+                banner = pm.getApplicationBanner(pkg);
+            }
+        } catch (Exception ignored) {
+            // not installed
+        }
+        if (banner != null) {
+            ImageView iv = new ImageView(this);
+            iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            iv.setImageDrawable(banner);
+            return iv;
+        }
+        Drawable icon = null;
+        String label = pkg;
+        try {
+            ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);
+            icon = pm.getApplicationIcon(ai);
+            label = String.valueOf(pm.getApplicationLabel(ai));
+        } catch (Exception ignored) {
+            // not installed
+        }
+        return iconTile(icon, label);
     }
 
     private View iconTile(Drawable icon, String label) {
         FrameLayout f = new FrameLayout(this);
         f.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{0xFF34343A, 0xFF1E1E22}));
-        ImageView iv = new ImageView(this);
-        iv.setImageDrawable(icon);
-        int s = Math.round(tileH * 0.42f);
-        FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(s, s, Gravity.CENTER);
-        ilp.bottomMargin = Math.round(tileH * 0.12f);
-        f.addView(iv, ilp);
+                new int[]{0xFF3A3A42, 0xFF1C1C22}));
+        if (icon != null) {
+            ImageView iv = new ImageView(this);
+            iv.setImageDrawable(icon);
+            int s = Math.round(tileH * 0.42f);
+            FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(s, s, Gravity.CENTER);
+            ilp.bottomMargin = Math.round(tileH * 0.12f);
+            f.addView(iv, ilp);
+        }
         TextView t = new TextView(this);
         t.setText(label);
         t.setTextColor(0xE6FFFFFF);
@@ -859,8 +963,8 @@ public class HomeActivity extends Activity {
         return f;
     }
 
-    /** Branded fallback tiles matching the mockup (used when an app has no TV banner). */
     private View styledTile(String pkg) {
+        float big = tileH * 0.25f / getResources().getDisplayMetrics().scaledDensity;
         FrameLayout f = new FrameLayout(this);
         LinearLayout inner = new LinearLayout(this);
         inner.setOrientation(LinearLayout.HORIZONTAL);
@@ -868,137 +972,143 @@ public class HomeActivity extends Activity {
         f.addView(inner, new FrameLayout.LayoutParams(-1, -1));
         TextView t = new TextView(this);
         t.setIncludeFontPadding(false);
-        float big = tileH * 0.24f / getResources().getDisplayMetrics().scaledDensity;
-        if (PKG_LIVE.equals(pkg)) {
-            f.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                    new int[]{0xFF2AA6FF, 0xFF0A78F0}));
-            ImageView iv = new ImageView(this);
-            iv.setImageResource(R.drawable.ic_h_tv);
-            int s = Math.round(tileH * 0.42f);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(s, s);
-            lp.rightMargin = dp(10);
-            inner.addView(iv, lp);
-            t.setText("Live\nChannels");
-            t.setTextColor(Color.WHITE);
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big * 0.62f);
-        } else if (PKG_NETFLIX.equals(pkg)) {
-            f.setBackgroundColor(Color.WHITE);
-            t.setText("NETFLIX");
-            t.setTextColor(0xFFE50914);
-            t.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big);
-        } else if (PKG_PRIME.equals(pkg)) {
-            f.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                    new int[]{0xFF1AA3F0, 0xFF0B6FB0}));
-            t.setText("prime video");
-            t.setTextColor(Color.WHITE);
-            t.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big * 0.85f);
-        } else if (PKG_YOUTUBE.equals(pkg)) {
-            f.setBackgroundColor(0xFFF7F7F7);
-            FrameLayout logo = new FrameLayout(this);
-            GradientDrawable red = new GradientDrawable();
-            red.setColor(0xFFFF0000);
-            red.setCornerRadius(tileH * 0.07f);
-            logo.setBackground(red);
-            ImageView play = new ImageView(this);
-            play.setImageResource(R.drawable.ic_h_play);
-            logo.addView(play, new FrameLayout.LayoutParams(Math.round(tileH * 0.2f),
-                    Math.round(tileH * 0.2f), Gravity.CENTER));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Math.round(tileH * 0.36f),
-                    Math.round(tileH * 0.26f));
-            lp.rightMargin = dp(4);
-            inner.addView(logo, lp);
-            t.setText("YouTube");
-            t.setTextColor(0xFF0F0F0F);
-            t.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big * 0.85f);
-        } else {
-            f.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                    new int[]{0xFF1446FF, 0xFF8B2BF5, 0xFFE02AB4}));
-            t.setText("\u2726 JioHotstar");
-            t.setTextColor(Color.WHITE);
-            t.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big * 0.72f);
+        switch (pkg) {
+            case PKG_LIVE: {
+                f.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                        new int[]{0xFF35AFFF, 0xFF0A6FE8}));
+                ImageView iv = new ImageView(this);
+                iv.setImageResource(R.drawable.ic_h_tv);
+                int s = Math.round(tileH * 0.40f);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(s, s);
+                lp.rightMargin = dp(10);
+                inner.addView(iv, lp);
+                t.setText("Live\nChannels");
+                t.setTextColor(Color.WHITE);
+                t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+                t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big * 0.62f);
+                break;
+            }
+            case PKG_NETFLIX:
+                f.setBackgroundColor(0xFFFAFAFA);
+                t.setText("NETFLIX");
+                t.setTextColor(0xFFE50914);
+                t.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+                t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big);
+                t.setScaleY(1.25f);
+                break;
+            case PKG_PRIME: {
+                f.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                        new int[]{0xFF22B2F5, 0xFF0A6AAE}));
+                LinearLayout col = new LinearLayout(this);
+                col.setOrientation(LinearLayout.VERTICAL);
+                col.setGravity(Gravity.CENTER);
+                t.setText("prime video");
+                t.setTextColor(Color.WHITE);
+                t.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+                t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big * 0.82f);
+                col.addView(t);
+                View smile = new View(this);
+                GradientDrawable sm = new GradientDrawable();
+                sm.setColor(Color.WHITE);
+                sm.setCornerRadius(dp(2));
+                smile.setBackground(sm);
+                LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(Math.round(tileW * 0.34f), dp(3));
+                slp.topMargin = dp(3);
+                col.addView(smile, slp);
+                inner.addView(col);
+                return f;
+            }
+            case PKG_YOUTUBE: {
+                f.setBackgroundColor(0xFFF7F7F7);
+                FrameLayout logo = new FrameLayout(this);
+                GradientDrawable red = new GradientDrawable();
+                red.setColor(0xFFFF0000);
+                red.setCornerRadius(tileH * 0.08f);
+                logo.setBackground(red);
+                ImageView play = new ImageView(this);
+                play.setImageResource(R.drawable.ic_h_play);
+                logo.addView(play, new FrameLayout.LayoutParams(Math.round(tileH * 0.2f),
+                        Math.round(tileH * 0.2f), Gravity.CENTER));
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Math.round(tileH * 0.36f),
+                        Math.round(tileH * 0.26f));
+                lp.rightMargin = dp(4);
+                inner.addView(logo, lp);
+                t.setText("YouTube");
+                t.setTextColor(0xFF0F0F0F);
+                t.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+                t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big * 0.86f);
+                break;
+            }
+            case PKG_HOTSTAR:
+                f.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                        new int[]{0xFF0B3BFF, 0xFF7A2BF5, 0xFFE02AB4}));
+                t.setText("\u2726 JioHotstar");
+                t.setTextColor(Color.WHITE);
+                t.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+                t.setTextSize(TypedValue.COMPLEX_UNIT_SP, big * 0.72f);
+                break;
+            default:
+                return null;
         }
         inner.addView(t);
         return f;
     }
 
-    /** Wide rounded tile. Focus = lift + 3dp white ring; nothing is drawn outside the tile. */
-    private FrameLayout tile(View content, final String pkg, final ComponentName component) {
-        final FrameLayout t = new FrameLayout(this);
-        t.setFocusable(true);
-        t.setClickable(true);
-        t.setOutlineProvider(new ViewOutlineProvider() {
+    private void registerPackageReceiver() {
+        packageReceiver = new BroadcastReceiver() {
             @Override
-            public void getOutline(View view, Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), tileRadius);
+            public void onReceive(Context c, Intent i) {
+                handler.removeCallbacks(rebuildRunnable);
+                handler.postDelayed(rebuildRunnable, 400);
             }
-        });
-        t.setClipToOutline(true);
-        t.addView(content, new FrameLayout.LayoutParams(-1, -1));
-        final GradientDrawable ring = new GradientDrawable();
-        ring.setCornerRadius(tileRadius);
-        ring.setColor(Color.TRANSPARENT);
-        ring.setStroke(dp(3), Color.WHITE);
-        t.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean f) {
-                t.setForeground(f ? ring : null);
-                t.setElevation(f ? dp(12) : 0);
-                t.animate().scaleX(f ? 1.08f : 1f).scaleY(f ? 1.08f : 1f)
-                        .setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
-            }
-        });
-        t.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (component != null) {
-                    Intent i = new Intent(Intent.ACTION_MAIN)
-                            .addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
-                            .setComponent(component)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    if (tryStart(i)) {
-                        return;
-                    }
-                }
-                launchApp(pkg);
-            }
-        });
-        return t;
+        };
+        IntentFilter f = new IntentFilter();
+        f.addAction(Intent.ACTION_PACKAGE_ADDED);
+        f.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        f.addAction(Intent.ACTION_PACKAGE_CHANGED);
+        f.addDataScheme("package");
+        registerReceiver(packageReceiver, f);
     }
 
-    // ----------------------------------------------------------------- top bar
+    private final Runnable rebuildRunnable = () -> {
+        if (activeMenu != null) {
+            closeMenu(false);
+        }
+        View f = getCurrentFocus();
+        String keep = f instanceof TileView ? ((TileView) f).pkg : null;
+        rebuildApps(keep != null ? keep : (dockTiles.isEmpty() ? null : dockTiles.get(0).pkg));
+    };
 
-    private void buildTopBar() {
-        int top = dp(34);
+    // ================================================================== header
+
+    private void buildHeader() {
+        header = new FrameLayout(this);
+        header.setClipChildren(false);
+        FrameLayout.LayoutParams hlp = new FrameLayout.LayoutParams(-1, dp(44), Gravity.TOP);
+        hlp.topMargin = dp(34);
+        root.addView(header, hlp);
 
         greeting = new TextView(this);
         greeting.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
         greeting.setSingleLine(true);
-        greeting.setShadowLayer(10 * density, 0, density, 0x80000000);
-        FrameLayout.LayoutParams glp = new FrameLayout.LayoutParams(-2, dp(44), Gravity.TOP | Gravity.START);
-        glp.leftMargin = margin;
-        glp.topMargin = top;
         greeting.setGravity(Gravity.CENTER_VERTICAL);
-        root.addView(greeting, glp);
+        greeting.setShadowLayer(10 * density, 0, density, 0x80000000);
+        FrameLayout.LayoutParams glp = new FrameLayout.LayoutParams(-2, -1, Gravity.START);
+        glp.leftMargin = margin;
+        header.addView(greeting, glp);
 
         LinearLayout right = new LinearLayout(this);
         right.setOrientation(LinearLayout.HORIZONTAL);
         right.setGravity(Gravity.CENTER_VERTICAL);
         right.setClipChildren(false);
-        FrameLayout.LayoutParams rlp = new FrameLayout.LayoutParams(-2, dp(44), Gravity.TOP | Gravity.END);
+        FrameLayout.LayoutParams rlp = new FrameLayout.LayoutParams(-2, -1, Gravity.END);
         rlp.rightMargin = margin;
-        rlp.topMargin = top;
-        root.addView(right, rlp);
+        header.addView(right, rlp);
 
-        btnInputs = circleButton(R.drawable.ic_h_input, 40, 20);
-        btnInputs.setTag("Inputs");
+        btnInputs = circleButton(R.drawable.ic_h_input, 40, 20, "Inputs");
         right.addView(btnInputs);
 
-        btnWifi = circleButton(R.drawable.ic_h_wifi, 40, 20);
-        btnWifi.setTag("Wi-Fi");
+        btnWifi = circleButton(R.drawable.ic_h_wifi, 40, 20, "Wi-Fi");
         vpnDot = new View(this);
         GradientDrawable green = new GradientDrawable();
         green.setShape(GradientDrawable.OVAL);
@@ -1007,18 +1117,15 @@ public class HomeActivity extends Activity {
         vpnDot.setBackground(green);
         vpnDot.setVisibility(View.GONE);
         FrameLayout.LayoutParams dlp = new FrameLayout.LayoutParams(dp(9), dp(9), Gravity.BOTTOM | Gravity.END);
-        dlp.rightMargin = dp(8);
-        dlp.bottomMargin = dp(8);
+        dlp.rightMargin = dp(7);
+        dlp.bottomMargin = dp(7);
         btnWifi.addView(vpnDot, dlp);
-        LinearLayout.LayoutParams wlp = (LinearLayout.LayoutParams) btnWifi.getLayoutParams();
-        wlp.leftMargin = dp(16);
-        right.addView(btnWifi, wlp);
+        ((LinearLayout.LayoutParams) btnWifi.getLayoutParams()).leftMargin = dp(16);
+        right.addView(btnWifi);
 
-        btnSettings = circleButton(R.drawable.ic_h_settings, 40, 22);
-        btnSettings.setTag("Settings");
-        LinearLayout.LayoutParams slp = (LinearLayout.LayoutParams) btnSettings.getLayoutParams();
-        slp.leftMargin = dp(16);
-        right.addView(btnSettings, slp);
+        btnSettings = circleButton(R.drawable.ic_h_settings, 40, 22, "Settings");
+        ((LinearLayout.LayoutParams) btnSettings.getLayoutParams()).leftMargin = dp(16);
+        right.addView(btnSettings);
 
         View divider = new View(this);
         divider.setBackgroundColor(0x4DFFFFFF);
@@ -1029,9 +1136,7 @@ public class HomeActivity extends Activity {
 
         LinearLayout clock = new LinearLayout(this);
         clock.setOrientation(LinearLayout.VERTICAL);
-        clock.setGravity(Gravity.START);
         right.addView(clock, new LinearLayout.LayoutParams(-2, -2));
-
         LinearLayout timeLine = new LinearLayout(this);
         timeLine.setOrientation(LinearLayout.HORIZONTAL);
         timeLine.setGravity(Gravity.BOTTOM);
@@ -1056,26 +1161,14 @@ public class HomeActivity extends Activity {
         clockDate.setPadding(0, dp(3), 0, 0);
         clock.addView(clockDate);
 
-        btnInputs.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                openInputs();
+        btnInputs.setOnClickListener(v -> openInputsMenu());
+        btnWifi.setOnClickListener(v -> {
+            if (!tryStart(new Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))) {
+                openSystemSettings();
             }
         });
-        btnWifi.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (!tryStart(new Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))) {
-                    openSystemSettings();
-                }
-            }
-        });
-        btnSettings.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                openMenu();
-            }
-        });
+        btnSettings.setOnClickListener(v -> openSettingsMenu());
+        updateGreeting();
     }
 
     private void buildTooltip() {
@@ -1093,138 +1186,74 @@ public class HomeActivity extends Activity {
         root.addView(tooltip, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START));
     }
 
-    private void onTopIconFocus(View b, boolean focused) {
-        if (tooltip == null || !(b.getTag() instanceof String)) {
-            return;
-        }
-        if (!focused || menuOpen) {
+    private FrameLayout circleButton(int iconRes, int sizeDp, int iconDp, String label) {
+        final FrameLayout b = new FrameLayout(this);
+        b.setLayoutParams(new LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp)));
+        b.setFocusable(true);
+        b.setClickable(true);
+        b.setClipChildren(false);
+        b.setTag(label);
+        b.setContentDescription(label);
+        b.setBackground(circleBg(false));
+        final ImageView iv = new ImageView(this);
+        iv.setImageResource(iconRes);
+        b.addView(iv, new FrameLayout.LayoutParams(dp(iconDp), dp(iconDp), Gravity.CENTER));
+        b.setOnFocusChangeListener((v, f) -> {
+            b.setBackground(circleBg(f));
+            if (f) {
+                iv.setColorFilter(0xFF111111, PorterDuff.Mode.SRC_IN);
+            } else {
+                iv.clearColorFilter();
+            }
+            focusScale(b, f, 1.12f);
+            showTooltip(b, f);
+        });
+        return b;
+    }
+
+    private GradientDrawable circleBg(boolean focused) {
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL);
+        g.setColor(focused ? 0xF2FFFFFF : 0x40303036);
+        g.setStroke(Math.max(1, dp(1)), focused ? 0xFFFFFFFF : 0x40FFFFFF);
+        return g;
+    }
+
+    private void showTooltip(View b, boolean focused) {
+        if (!focused || activeMenu != null) {
             tooltip.animate().alpha(0f).setDuration(120).start();
             return;
         }
         tooltip.setText((String) b.getTag());
         tooltip.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
         int[] a = new int[2];
-        int[] r = new int[2];
         b.getLocationInWindow(a);
-        root.getLocationInWindow(r);
-        float cx = a[0] - r[0] + b.getWidth() / 2f;
+        float cx = a[0] + b.getWidth() / 2f;
         tooltip.setTranslationX(cx - tooltip.getMeasuredWidth() / 2f);
-        tooltip.setTranslationY(a[1] - r[1] + b.getHeight() + dp(10));
-        tooltip.animate().alpha(1f).setDuration(160).start();
+        tooltip.setTranslationY(dp(34) + dp(44) + dp(10));
+        tooltip.animate().alpha(1f).setDuration(180).start();
     }
 
-    // ----------------------------------------------------------------- settings dropdown
+    // ================================================================== menus (generic)
 
-    private void buildMenu() {
-        menu = new FrostedPanel(this);
-        menu.setCornerRadius(dp(22));
-        menu.setTint(0xBF18181B); // ~75% dark charcoal
-        menu.setRim(0x33FFFFFF, Math.max(1f, density));
-        menu.setVisibility(View.INVISIBLE);
-        menu.setElevation(dp(20));
-        int w = dp(272);
-        FrameLayout.LayoutParams mlp = new FrameLayout.LayoutParams(w, -2, Gravity.TOP | Gravity.END);
-        mlp.rightMargin = margin;
-        mlp.topMargin = dp(34) + dp(44) + dp(14);
-        root.addView(menu, mlp);
-
-        LinearLayout list = new LinearLayout(this);
-        list.setOrientation(LinearLayout.VERTICAL);
-        list.setPadding(dp(8), dp(8), dp(8), dp(8));
-        menu.addView(list, new FrameLayout.LayoutParams(-1, -2));
-
-        // 1. Brightness
-        brightSlider = new SliderView(this);
-        brightPct = valueText();
-        rowBrightness = sliderRow(list, R.drawable.ic_h_brightness, brightSlider, brightPct);
-
-        // 2. Volume
-        volSlider = new SliderView(this);
-        volPct = valueText();
-        rowVolume = sliderRow(list, R.drawable.ic_h_volume, volSlider, volPct);
-
-        // 3. User Name
-        LinearLayout nameRow = menuRow(list, dp(54));
-        nameRow.addView(icon(R.drawable.ic_h_person, 22));
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(14), 0, 0, 0);
-        TextView label = new TextView(this);
-        label.setText("User Name");
-        label.setTextColor(0x99FFFFFF);
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        col.addView(label);
-        nameValue = new TextView(this);
-        nameValue.setTextColor(Color.WHITE);
-        nameValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        nameValue.setSingleLine(true);
-        nameValue.setEllipsize(TextUtils.TruncateAt.END);
-        col.addView(nameValue);
-        nameRow.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
-        ImageView pencil = icon(R.drawable.ic_h_edit, 18);
-        pencil.setAlpha(0.8f);
-        nameRow.addView(pencil);
-        nameRow.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                editUserName();
-            }
-        });
-
-        // 4. Divider + System Settings
-        View div = new View(this);
-        div.setBackgroundColor(0x26FFFFFF);
-        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(-1, Math.max(1, dp(1)));
-        dlp.topMargin = dp(6);
-        dlp.bottomMargin = dp(6);
-        dlp.leftMargin = dp(6);
-        dlp.rightMargin = dp(6);
-        list.addView(div, dlp);
-
-        LinearLayout sys = menuRow(list, dp(46));
-        sys.addView(icon(R.drawable.ic_h_settings, 22));
-        TextView sysText = new TextView(this);
-        sysText.setText("System Settings");
-        sysText.setTextColor(Color.WHITE);
-        sysText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        sysText.setPadding(dp(14), 0, 0, 0);
-        sys.addView(sysText, new LinearLayout.LayoutParams(0, -2, 1f));
-        ImageView chev = icon(R.drawable.ic_h_chevron_right, 20);
-        chev.setAlpha(0.8f);
-        sys.addView(chev);
-        sys.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                closeMenu();
-                openSystemSettings();
-            }
-        });
-
-        updateGreeting();
+    private Menu newMenu(int widthDp) {
+        Menu m = new Menu();
+        m.panel = new FrostedPanel(this);
+        m.panel.attach(backdrop, screenW, screenH);
+        m.panel.setCornerRadius(dp(22));
+        m.panel.setTint(0xBF18181B); // ~75% dark charcoal
+        m.panel.setRim(0x33FFFFFF, Math.max(1f, density));
+        m.panel.setElevation(dp(20));
+        m.panel.setFocusable(false);
+        m.list = new LinearLayout(this);
+        m.list.setOrientation(LinearLayout.VERTICAL);
+        m.list.setPadding(dp(8), dp(8), dp(8), dp(8));
+        m.panel.addView(m.list, new FrameLayout.LayoutParams(-1, -2));
+        m.panel.setLayoutParams(new FrameLayout.LayoutParams(dp(widthDp), -2, Gravity.TOP | Gravity.START));
+        return m;
     }
 
-    private TextView valueText() {
-        TextView t = new TextView(this);
-        t.setTextColor(Color.WHITE);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        t.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        t.setMinWidth(dp(42));
-        return t;
-    }
-
-    private View sliderRow(LinearLayout list, int iconRes, SliderView slider, TextView pct) {
-        LinearLayout row = menuRow(list, dp(46));
-        row.addView(icon(iconRes, 22));
-        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(0, dp(24), 1f);
-        slp.leftMargin = dp(12);
-        slp.rightMargin = dp(10);
-        row.addView(slider, slp);
-        row.addView(pct, new LinearLayout.LayoutParams(-2, -2));
-        return row;
-    }
-
-    /** Uniform rounded-rectangle row container with a clean focus state. */
-    private LinearLayout menuRow(LinearLayout list, int height) {
+    private LinearLayout menuRow(Menu m, int heightDp) {
         final LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -1232,17 +1261,67 @@ public class HomeActivity extends Activity {
         row.setFocusable(true);
         row.setClickable(true);
         row.setBackground(rowBg(false));
-        row.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean f) {
-                row.setBackground(rowBg(f));
-            }
-        });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, height);
-        lp.topMargin = menuRows.isEmpty() ? 0 : dp(4);
-        list.addView(row, lp);
-        menuRows.add(row);
+        row.setOnFocusChangeListener((v, f) -> row.setBackground(rowBg(f)));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(heightDp));
+        lp.topMargin = m.rows.isEmpty() ? 0 : dp(4);
+        m.list.addView(row, lp);
+        m.rows.add(row);
         return row;
+    }
+
+    private void menuHeader(Menu m, String text) {
+        TextView t = new TextView(this);
+        t.setText(text.toUpperCase(Locale.getDefault()));
+        t.setTextColor(0x99FFFFFF);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        t.setLetterSpacing(0.1f);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        t.setSingleLine(true);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        t.setPadding(dp(14), dp(6), dp(14), dp(8));
+        m.list.addView(t, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void menuDivider(Menu m) {
+        View div = new View(this);
+        div.setBackgroundColor(0x26FFFFFF);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, Math.max(1, dp(1)));
+        lp.setMargins(dp(6), dp(6), dp(6), dp(2));
+        m.list.addView(div, lp);
+    }
+
+    private LinearLayout labelRow(Menu m, int iconRes, String label, String sub, int trailingRes) {
+        LinearLayout row = menuRow(m, sub != null ? 54 : 46);
+        row.addView(icon(iconRes, 22));
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(14), 0, dp(8), 0);
+        if (sub != null && iconRes == R.drawable.ic_h_person) {
+            col.addView(smallText(sub, 0x99FFFFFF, 11));
+            col.addView(smallText(label, Color.WHITE, 15));
+        } else {
+            col.addView(smallText(label, Color.WHITE, 15));
+            if (sub != null) {
+                col.addView(smallText(sub, 0x99FFFFFF, 11));
+            }
+        }
+        row.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
+        if (trailingRes != 0) {
+            ImageView tr = icon(trailingRes, 18);
+            tr.setAlpha(0.8f);
+            row.addView(tr);
+        }
+        return row;
+    }
+
+    private TextView smallText(String s, int color, int sp) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextColor(color);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        t.setSingleLine(true);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        return t;
     }
 
     private GradientDrawable rowBg(boolean focused) {
@@ -1255,51 +1334,180 @@ public class HomeActivity extends Activity {
         return g;
     }
 
-    private void openMenu() {
-        if (menuOpen) {
-            return;
+    private static final int BELOW_RIGHT_EDGE = 0;
+    private static final int BELOW_ANCHOR = 1;
+    private static final int ABOVE_ANCHOR = 2;
+
+    private void openMenu(final Menu m, View anchor, int placement) {
+        if (activeMenu != null) {
+            closeMenu(false);
         }
-        menuOpen = true;
-        refreshVolume();
-        refreshBrightness();
+        activeMenu = m;
+        menuConfirmDown = false;
+        m.returnFocus = getCurrentFocus();
+        if (m.returnFocus != null) {
+            m.returnFocus.setPressed(false);
+        }
+        if (m.panel.getParent() == null) {
+            root.addView(m.panel, m.panel.getLayoutParams());
+        }
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) m.panel.getLayoutParams();
+        m.panel.measure(View.MeasureSpec.makeMeasureSpec(lp.width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int w = lp.width;
+        int h = m.panel.getMeasuredHeight();
+        int[] a = new int[2];
+        anchor.getLocationInWindow(a);
+        float ax = a[0] + anchor.getWidth() * anchor.getScaleX() / 2f
+                + (anchor.getWidth() - anchor.getWidth() * anchor.getScaleX()) / 2f;
+        int x;
+        int y;
+        if (placement == BELOW_RIGHT_EDGE) {
+            x = screenW - margin - w;
+            y = dp(34) + dp(44) + dp(14);
+        } else if (placement == BELOW_ANCHOR) {
+            x = Math.round(ax - w / 2f);
+            y = dp(34) + dp(44) + dp(14);
+        } else {
+            x = Math.round(ax - w / 2f);
+            y = a[1] - h - dp(10);
+            if (y < dp(24)) {
+                y = a[1] + anchor.getHeight() + dp(10);
+            }
+        }
+        x = Math.max(margin, Math.min(screenW - margin - w, x));
+        lp.leftMargin = x;
+        lp.topMargin = Math.max(dp(16), y);
+        m.panel.setLayoutParams(lp);
+
+        m.panel.setVisibility(View.VISIBLE);
+        m.panel.setAlpha(0f);
+        m.panel.setScaleX(0.96f);
+        m.panel.setScaleY(0.96f);
+        m.panel.setPivotX(placement == BELOW_RIGHT_EDGE ? w : w / 2f);
+        m.panel.setPivotY(placement == ABOVE_ANCHOR ? h : 0);
+        m.panel.setTranslationY(placement == ABOVE_ANCHOR ? dp(8) : -dp(8));
+        m.panel.animate().alpha(1f).scaleX(1f).scaleY(1f).translationY(0f).setDuration(260)
+                .setInterpolator(EASE).setUpdateListener(an -> m.panel.invalidate()).start();
+
         tooltip.animate().alpha(0f).setDuration(100).start();
         pauseTimer();
-        menu.capture(heroLayer);
-        menu.setVisibility(View.VISIBLE);
-        menu.setAlpha(0f);
-        menu.setTranslationY(-dp(10));
-        menu.animate().alpha(1f).translationY(0f).setDuration(220)
-                .setInterpolator(new DecelerateInterpolator()).start();
-        // Visual priority on the menu: dim the dock; focus moves into the menu so no dock ring remains.
-        dock.animate().alpha(0.45f).setDuration(220).start();
-        for (LinearLayout r : extraRows) {
-            r.animate().alpha(0.45f).setDuration(220).start();
+        // Visual priority on the menu: dim the dock + rows; focus moves into the menu.
+        lowerStack.animate().alpha(0.42f).setDuration(240).setInterpolator(EASE).start();
+        if (!m.rows.isEmpty()) {
+            m.rows.get(0).requestFocus();
         }
-        menuRows.get(0).requestFocus();
     }
 
-    private void closeMenu() {
-        if (!menuOpen) {
+    private void closeMenu(boolean restoreFocus) {
+        final Menu m = activeMenu;
+        if (m == null) {
             return;
         }
-        menuOpen = false;
-        menu.animate().alpha(0f).translationY(-dp(10)).setDuration(160)
-                .withEndAction(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (!menuOpen) {
-                            menu.setVisibility(View.INVISIBLE);
+        activeMenu = null;
+        m.panel.animate().alpha(0f).scaleX(0.97f).scaleY(0.97f).setDuration(170).setInterpolator(EASE_IN_OUT)
+                .setUpdateListener(null)
+                .withEndAction(() -> {
+                    if (activeMenu != m) {
+                        if (m.dynamic) {
+                            root.removeView(m.panel);
+                        } else {
+                            m.panel.setVisibility(View.INVISIBLE);
                         }
                     }
                 }).start();
-        dock.animate().alpha(1f).setDuration(200).start();
-        for (LinearLayout r : extraRows) {
-            r.animate().alpha(1f).setDuration(200).start();
+        lowerStack.animate().alpha(1f).setDuration(220).setInterpolator(EASE).start();
+        if (restoreFocus && m.returnFocus != null && m.returnFocus.isAttachedToWindow()) {
+            m.returnFocus.requestFocus();
         }
-        btnSettings.requestFocus();
         if (shiftedRow < 0) {
             resumeTimer();
         }
+    }
+
+    // ================================================================== settings menu
+
+    private void openSettingsMenu() {
+        if (settingsMenu == null) {
+            settingsMenu = buildSettingsMenu();
+        }
+        refreshVolume();
+        int b = brightness.get();
+        brightSlider.setValue(b);
+        brightPct.setText(b + "%");
+        nameValue.setText(userName());
+        openMenu(settingsMenu, btnSettings, BELOW_RIGHT_EDGE);
+    }
+
+    private Menu buildSettingsMenu() {
+        Menu m = newMenu(276);
+
+        brightSlider = new SliderView(this);
+        brightPct = valueText();
+        View rowB = sliderRow(m, R.drawable.ic_h_brightness, brightSlider, brightPct);
+        m.adjust.put(rowB, delta -> {
+            int v = brightness.set(brightness.get() + delta);
+            brightSlider.setValue(v);
+            brightPct.setText(v + "%");
+            maybeShowDimHint();
+        });
+
+        volSlider = new SliderView(this);
+        volPct = valueText();
+        View rowV = sliderRow(m, R.drawable.ic_h_volume, volSlider, volPct);
+        m.adjust.put(rowV, this::changeVolume);
+
+        LinearLayout nameRow = menuRow(m, 54);
+        nameRow.addView(icon(R.drawable.ic_h_person, 22));
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(14), 0, 0, 0);
+        col.addView(smallText("User Name", 0x99FFFFFF, 11));
+        nameValue = smallText(userName(), Color.WHITE, 15);
+        col.addView(nameValue);
+        nameRow.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
+        ImageView pencil = icon(R.drawable.ic_h_edit, 18);
+        pencil.setAlpha(0.8f);
+        nameRow.addView(pencil);
+        nameRow.setOnClickListener(v -> editUserName());
+
+        menuDivider(m);
+        LinearLayout sys = labelRow(m, R.drawable.ic_h_settings, "System Settings", null,
+                R.drawable.ic_h_chevron_right);
+        sys.setOnClickListener(v -> {
+            closeMenu(true);
+            openSystemSettings();
+        });
+        return m;
+    }
+
+    private TextView valueText() {
+        TextView t = new TextView(this);
+        t.setTextColor(Color.WHITE);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        t.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        t.setMinWidth(dp(42));
+        return t;
+    }
+
+    private View sliderRow(Menu m, int iconRes, SliderView slider, TextView pct) {
+        LinearLayout row = menuRow(m, 46);
+        row.addView(icon(iconRes, 22));
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(0, dp(24), 1f);
+        slp.leftMargin = dp(12);
+        slp.rightMargin = dp(10);
+        row.addView(slider, slp);
+        row.addView(pct, new LinearLayout.LayoutParams(-2, -2));
+        return row;
+    }
+
+    private void maybeShowDimHint() {
+        if (brightness.hasHardwareControl() || brightness.canOverlay() || prefs.getBoolean(KEY_DIM_HINT, false)) {
+            return;
+        }
+        prefs.edit().putBoolean(KEY_DIM_HINT, true).apply();
+        Toast.makeText(this, "Dimming the home screen only. Allow \"Display over other apps\" "
+                + "for TV-wide brightness.", Toast.LENGTH_LONG).show();
     }
 
     private void editUserName() {
@@ -1328,8 +1536,8 @@ public class HomeActivity extends Activity {
         });
         dlg.setOnDismissListener(d -> {
             hideSystemBars();
-            if (menuOpen) {
-                menuRows.get(2).requestFocus();
+            if (activeMenu == settingsMenu && settingsMenu != null) {
+                settingsMenu.rows.get(2).requestFocus();
             }
         });
         dlg.show();
@@ -1352,7 +1560,117 @@ public class HomeActivity extends Activity {
         return prefs.getString(KEY_NAME, DEFAULT_NAME);
     }
 
-    // ----------------------------------------------------------------- brightness / volume
+    // ================================================================== inputs menu
+
+    private void openInputsMenu() {
+        Menu m = newMenu(300);
+        m.dynamic = true;
+        menuHeader(m, "Inputs");
+        List<TvSources.Source> sources = TvSources.list(this);
+        for (final TvSources.Source s : sources) {
+            int ic = s.isTuner() ? R.drawable.ic_h_antenna
+                    : (s.isHdmi() ? R.drawable.ic_h_hdmi : R.drawable.ic_h_av);
+            LinearLayout row = labelRow(m, ic, s.label, s.status(), 0);
+            if (s.connected()) {
+                View dot = new View(this);
+                GradientDrawable g = new GradientDrawable();
+                g.setShape(GradientDrawable.OVAL);
+                g.setColor(0xFF34C759);
+                dot.setBackground(g);
+                row.addView(dot, new LinearLayout.LayoutParams(dp(8), dp(8)));
+            }
+            row.setOnClickListener(v -> {
+                closeMenu(true);
+                if (!TvSources.open(this, s)) {
+                    Toast.makeText(this, "Couldn't switch to " + s.label, Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+        if (sources.isEmpty()) {
+            LinearLayout live = labelRow(m, R.drawable.ic_h_antenna, "Live TV", "Open the TV tuner app", 0);
+            live.setOnClickListener(v -> {
+                closeMenu(true);
+                launchApp(PKG_LIVE);
+            });
+            LinearLayout panel = labelRow(m, R.drawable.ic_h_input, "Source menu",
+                    "This TV doesn't list its inputs to apps", 0);
+            panel.setOnClickListener(v -> {
+                closeMenu(true);
+                if (!tryStart(new Intent("com.android.tv.action.VIEW_INPUTS")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))) {
+                    openSystemSettings();
+                }
+            });
+        }
+        openMenu(m, btnInputs, BELOW_ANCHOR);
+    }
+
+    // ================================================================== app long-press menu
+
+    private void openAppMenu(final TileView tile) {
+        final String pkg = tile.pkg;
+        PackageManager pm = getPackageManager();
+        String label = pkg;
+        boolean installed = false;
+        boolean system = false;
+        try {
+            ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);
+            label = String.valueOf(pm.getApplicationLabel(ai));
+            installed = true;
+            system = (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0
+                    && (ai.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0;
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // favourite that isn't installed
+        }
+        final List<String> favs = favourites();
+        final boolean isFav = favs.contains(pkg);
+
+        Menu m = newMenu(256);
+        m.dynamic = true;
+        menuHeader(m, label);
+        LinearLayout fav = labelRow(m, isFav ? R.drawable.ic_h_star : R.drawable.ic_h_star_outline,
+                isFav ? "Remove from Favourites" : "Add to Favourites", null, 0);
+        fav.setOnClickListener(v -> {
+            closeMenu(false);
+            List<String> f = favourites();
+            if (isFav) {
+                f.remove(pkg);
+            } else {
+                if (f.size() >= MAX_FAVS) {
+                    Toast.makeText(this, "Dock is full. Remove a favourite first.", Toast.LENGTH_SHORT).show();
+                    tile.requestFocus();
+                    return;
+                }
+                f.add(pkg);
+            }
+            saveFavourites(f);
+            rebuildApps(pkg);
+        });
+        if (installed) {
+            LinearLayout info = labelRow(m, R.drawable.ic_h_info, "App info", null, 0);
+            info.setOnClickListener(v -> {
+                closeMenu(true);
+                tryStart(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", pkg, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            });
+            if (!system) {
+                LinearLayout un = labelRow(m, R.drawable.ic_h_delete, "Uninstall", null, 0);
+                ((ImageView) un.getChildAt(0)).setColorFilter(0xFFFF6B6B, PorterDuff.Mode.SRC_IN);
+                un.setOnClickListener(v -> {
+                    closeMenu(true);
+                    Intent i = new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + pkg))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    if (!tryStart(i)) {
+                        tryStart(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", pkg, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    }
+                });
+            }
+        }
+        openMenu(m, tile, ABOVE_ANCHOR);
+    }
+
+    // ================================================================== volume
 
     private void refreshVolume() {
         if (audio == null || volSlider == null) {
@@ -1377,52 +1695,15 @@ public class HomeActivity extends Activity {
         try {
             audio.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0);
         } catch (SecurityException ignored) {
-            // Do-not-disturb policy can block volume changes.
+            // DND policy
         }
         refreshVolume();
     }
 
-    private void refreshBrightness() {
-        if (brightSlider == null) {
-            return;
-        }
-        float w = getWindow().getAttributes().screenBrightness;
-        int v;
-        if (w >= 0f) {
-            v = Math.round(w * 100f);
-        } else {
-            int sys = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 180);
-            v = Math.round(sys * 100f / 255f);
-        }
-        brightSlider.setValue(v);
-        brightPct.setText(brightSlider.getValue() + "%");
-    }
-
-    private void changeBrightness(int delta) {
-        int v = Math.max(5, Math.min(100, brightSlider.getValue() + delta));
-        brightSlider.setValue(v);
-        brightPct.setText(v + "%");
-        // Always applies while the home screen is visible ...
-        WindowManager.LayoutParams lp = getWindow().getAttributes();
-        lp.screenBrightness = v / 100f;
-        getWindow().setAttributes(lp);
-        // ... and system-wide when "Modify system settings" has been granted.
-        if (Build.VERSION.SDK_INT < 23 || Settings.System.canWrite(this)) {
-            try {
-                Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE,
-                        Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
-                Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS,
-                        Math.round(v * 255f / 100f));
-            } catch (Exception ignored) {
-                // Some TV builds reject the write; the window-level brightness still applies.
-            }
-        }
-    }
-
-    // ----------------------------------------------------------------- watchlist
+    // ================================================================== watchlist
 
     private Set<String> watchlist() {
-        return new HashSet<>(prefs.getStringSet(KEY_WATCHLIST, new HashSet<String>()));
+        return new HashSet<>(prefs.getStringSet(KEY_WATCHLIST, new HashSet<>()));
     }
 
     private void toggleWatchlist(HeroItem item) {
@@ -1432,17 +1713,19 @@ public class HomeActivity extends Activity {
         }
         prefs.edit().putStringSet(KEY_WATCHLIST, set).apply();
         updateWatchButton();
-        restartTimer(); // give the user a full slide after interacting
+        watchIcon.setScaleX(0.6f);
+        watchIcon.setScaleY(0.6f);
+        watchIcon.animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(EASE).start();
+        restartTimer();
     }
 
     private void updateWatchButton() {
         boolean saved = watchlist().contains(items[current].id);
         watchIcon.setImageResource(saved ? R.drawable.ic_h_check : R.drawable.ic_h_add);
-        watchLabel.setText("Watchlist");
         btnWatch.setContentDescription(saved ? "Remove from Watchlist" : "Add to Watchlist");
     }
 
-    // ----------------------------------------------------------------- clock & greeting
+    // ================================================================== clock + greeting
 
     private final Runnable ticker = new Runnable() {
         @Override
@@ -1466,17 +1749,10 @@ public class HomeActivity extends Activity {
 
     private void updateGreeting() {
         int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
-        String prefix;
-        if (hour >= 5 && hour < 12) {
-            prefix = "Good Morning, ";
-        } else if (hour >= 12 && hour < 17) {
-            prefix = "Good Afternoon, ";
-        } else {
-            prefix = "Good Evening, ";
-        }
+        String prefix = hour >= 5 && hour < 12 ? "Good Morning, "
+                : (hour >= 12 && hour < 17 ? "Good Afternoon, " : "Good Evening, ");
         String name = userName();
-        SpannableStringBuilder sb = new SpannableStringBuilder();
-        sb.append(prefix);
+        SpannableStringBuilder sb = new SpannableStringBuilder(prefix);
         sb.setSpan(new ForegroundColorSpan(0xBFFFFFFF), 0, prefix.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         sb.setSpan(new TypefaceSpan("sans-serif-light"), 0, prefix.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         int start = sb.length();
@@ -1505,12 +1781,12 @@ public class HomeActivity extends Activity {
                 }
             }
         } catch (Exception ignored) {
-            // Missing ACCESS_NETWORK_STATE or OEM restrictions.
+            // restricted
         }
         return false;
     }
 
-    // ----------------------------------------------------------------- D-pad
+    // ================================================================== D-pad
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
@@ -1520,31 +1796,29 @@ public class HomeActivity extends Activity {
         if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN
                 || code == KeyEvent.KEYCODE_VOLUME_MUTE) {
             boolean r = super.dispatchKeyEvent(event);
-            handler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    refreshVolume();
-                }
-            }, 120);
+            handler.postDelayed(this::refreshVolume, 120);
             return r;
         }
-
-        if (menuOpen) {
+        if (activeMenu != null) {
             return handleMenuKey(code, down, event);
         }
-
         if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE) {
             if (down && event.getRepeatCount() == 0) {
-                if (shiftedRow >= 0) {
+                if (!dockTiles.isEmpty()) {
                     dockTiles.get(0).requestFocus();
-                    scrollToRow(-1);
-                } else if (!dockTiles.contains(getCurrentFocus())) {
-                    dockTiles.get(0).requestFocus();
+                } else {
+                    btnPlay.requestFocus();
                 }
+                scrollToRow(-1);
             }
             return true;
         }
-
+        if (code == KeyEvent.KEYCODE_MENU) {
+            if (down && event.getRepeatCount() == 0 && getCurrentFocus() instanceof TileView) {
+                openAppMenu((TileView) getCurrentFocus());
+            }
+            return true;
+        }
         if (down) {
             switch (code) {
                 case KeyEvent.KEYCODE_DPAD_UP:
@@ -1562,12 +1836,13 @@ public class HomeActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
 
-    /** Focus trap: only menu rows are reachable; Left/Right drive the sliders; Back closes. */
+    /** Focus trap: only menu rows are reachable; Left/Right drive sliders; Back closes. */
     private boolean handleMenuKey(int code, boolean down, KeyEvent event) {
+        Menu m = activeMenu;
         View focused = getCurrentFocus();
-        int idx = menuRows.indexOf(focused);
-        if (idx < 0) {
-            menuRows.get(0).requestFocus();
+        int idx = m.rows.indexOf(focused);
+        if (idx < 0 && !m.rows.isEmpty()) {
+            m.rows.get(0).requestFocus();
             idx = 0;
         }
         switch (code) {
@@ -1575,45 +1850,55 @@ public class HomeActivity extends Activity {
             case KeyEvent.KEYCODE_ESCAPE:
             case KeyEvent.KEYCODE_MENU:
                 if (down && event.getRepeatCount() == 0) {
-                    closeMenu();
+                    closeMenu(true);
                 }
                 return true;
             case KeyEvent.KEYCODE_DPAD_UP:
                 if (down && idx > 0) {
-                    menuRows.get(idx - 1).requestFocus();
+                    m.rows.get(idx - 1).requestFocus();
                 }
                 return true;
             case KeyEvent.KEYCODE_DPAD_DOWN:
-                if (down && idx < menuRows.size() - 1) {
-                    menuRows.get(idx + 1).requestFocus();
+                if (down && idx < m.rows.size() - 1) {
+                    m.rows.get(idx + 1).requestFocus();
                 }
                 return true;
             case KeyEvent.KEYCODE_DPAD_LEFT:
             case KeyEvent.KEYCODE_DPAD_RIGHT:
                 if (down) {
-                    int delta = code == KeyEvent.KEYCODE_DPAD_RIGHT ? STEP : -STEP;
-                    if (focused == rowBrightness) {
-                        changeBrightness(delta);
-                    } else if (focused == rowVolume) {
-                        changeVolume(delta);
+                    Adjust a = m.adjust.get(focused);
+                    if (a != null) {
+                        a.by(code == KeyEvent.KEYCODE_DPAD_RIGHT ? STEP : -STEP);
                     }
                 }
                 return true;
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
             case KeyEvent.KEYCODE_NUMPAD_ENTER:
-                if (!down && focused != null && focused != rowBrightness && focused != rowVolume) {
-                    focused.performClick();
+                // Only act on a press that STARTED inside the menu, so the key-up that ends a
+                // long-press on a tile doesn't immediately trigger the first menu row.
+                if (down) {
+                    if (event.getRepeatCount() == 0) {
+                        menuConfirmDown = true;
+                    }
+                } else if (menuConfirmDown) {
+                    menuConfirmDown = false;
+                    if (focused != null && !m.adjust.containsKey(focused)) {
+                        focused.performClick();
+                    }
                 }
                 return true;
             case KeyEvent.KEYCODE_HOME:
                 return super.dispatchKeyEvent(event);
             default:
-                return true; // swallow everything else while the menu is open
+                return true;
         }
     }
 
-    /** Deterministic row-based navigation: top bar / hero controls / dock / app rows. */
+    /**
+     * Row model: 0 header icons, 1 hero (Play, Watchlist), 2 dock, 3+ app rows.
+     * In the hero row, Left past Play = previous slide, Right past the last button = next slide.
+     */
     private boolean moveFocus(int dRow, int dCol) {
         List<List<View>> rows = navRows();
         View focused = getCurrentFocus();
@@ -1627,26 +1912,27 @@ public class HomeActivity extends Activity {
             }
         }
         if (r < 0) {
-            dockTiles.get(0).requestFocus();
+            (dockTiles.isEmpty() ? btnPlay : dockTiles.get(0)).requestFocus();
             return true;
         }
         if (dCol != 0) {
             int nc = c + dCol;
-            if (nc >= 0 && nc < rows.get(r).size()) {
-                rows.get(r).get(nc).requestFocus();
+            List<View> row = rows.get(r);
+            if (nc >= 0 && nc < row.size()) {
+                row.get(nc).requestFocus();
+            } else if (r == 1) {
+                showSlide(current + dCol, true, dCol);
             }
             return true;
         }
         int nr = r + dRow;
+        while (nr >= 0 && nr < rows.size() && rows.get(nr).isEmpty()) {
+            nr += dRow;
+        }
         if (nr < 0 || nr >= rows.size()) {
             return true;
         }
-        View target;
-        if (nr == 1 && dRow < 0) {
-            target = btnPlay; // entering the hero from below always lands on Play
-        } else {
-            target = nearestByX(rows.get(nr), focused);
-        }
+        View target = nr == 1 ? btnPlay : nearestByX(rows.get(nr), focused);
         target.requestFocus();
         scrollToRow(nr >= 3 ? nr - 3 : -1);
         return true;
@@ -1660,11 +1946,9 @@ public class HomeActivity extends Activity {
         if (btnWatch.getVisibility() == View.VISIBLE) {
             hero.add(btnWatch);
         }
-        hero.add(btnPrev);
-        hero.add(btnNext);
         rows.add(hero);
-        rows.add(dockTiles);
-        for (LinearLayout row : extraRows) {
+        rows.add(new ArrayList<View>(dockTiles));
+        for (LinearLayout row : appRows) {
             List<View> list = new ArrayList<>();
             for (int i = 0; i < row.getChildCount(); i++) {
                 list.add(row.getChildAt(i));
@@ -1677,12 +1961,12 @@ public class HomeActivity extends Activity {
     private View nearestByX(List<View> candidates, View from) {
         int[] loc = new int[2];
         from.getLocationOnScreen(loc);
-        float fx = loc[0] + from.getWidth() / 2f;
+        float fx = loc[0] + from.getWidth() * from.getScaleX() / 2f;
         View best = candidates.get(0);
         float bestD = Float.MAX_VALUE;
         for (View v : candidates) {
             v.getLocationOnScreen(loc);
-            float d = Math.abs(loc[0] + v.getWidth() / 2f - fx);
+            float d = Math.abs(loc[0] + v.getWidth() * v.getScaleX() / 2f - fx);
             if (d < bestD) {
                 bestD = d;
                 best = v;
@@ -1691,36 +1975,75 @@ public class HomeActivity extends Activity {
         return best;
     }
 
-    /** Smoothly scroll the lower stack so app row {@code index} sits where the dock was. */
+    private void syncScrollToFocus() {
+        View f = getCurrentFocus();
+        for (int i = 0; i < appRows.size(); i++) {
+            if (f != null && f.getParent() == appRows.get(i)) {
+                scrollToRow(i);
+                return;
+            }
+        }
+        scrollToRow(-1);
+    }
+
+    /**
+     * Home (index -1): hero + header visible, dock parked at 70%.
+     * App row k: the stack glides up so row k sits mid-screen; header and hero info fade away
+     * and the artwork dims. The dock glass re-samples the blurred backdrop every frame.
+     */
     private void scrollToRow(int index) {
-        if (Float.isNaN(baseShift) || index == shiftedRow) {
+        if (index == shiftedRow) {
             return;
         }
+        boolean wasHome = shiftedRow < 0;
         shiftedRow = index;
-        float target = baseShift;
-        if (index >= 0) {
-            LinearLayout row = extraRows.get(index);
-            target = baseShift - (row.getTop() - dock.getTop());
+        boolean home = index < 0;
+        float target = 0f;
+        if (!home) {
+            LinearLayout row = appRows.get(index);
+            int rowTop = rowsBox.getTop() + row.getTop() + tilePad;
+            target = screenH * 0.47f - dockTop - rowTop;
         }
-        boolean showingHero = index < 0;
-        lowerStack.animate().translationY(target).setDuration(420)
-                .setInterpolator(new DecelerateInterpolator(1.6f))
-                .withEndAction(new Runnable() {
-                    @Override
-                    public void run() {
-                        dock.capture(heroLayer);
-                    }
-                }).start();
-        heroInfo.animate().alpha(showingHero ? 1f : 0f).setDuration(260).start();
-        pageDim.animate().alpha(showingHero ? 0f : 0.45f).setDuration(320).start();
-        if (showingHero) {
+        long dur = 560;
+        lowerStack.animate().cancel();
+        lowerStack.animate().translationY(target).setDuration(dur).setInterpolator(EASE)
+                .setUpdateListener(a -> backdrop.invalidateAll()).start();
+
+        float hideShift = -dp(24);
+        header.animate().alpha(home ? 1f : 0f).translationY(home ? 0f : hideShift)
+                .setDuration(home ? 420 : 260).setStartDelay(home ? 120 : 0).setInterpolator(EASE).start();
+        heroInfo.animate().alpha(home ? 1f : 0f).translationY(home ? 0f : hideShift * 2)
+                .setDuration(home ? 460 : 280).setStartDelay(home ? 140 : 0).setInterpolator(EASE).start();
+        indicator.animate().alpha(home ? 1f : 0f).translationY(home ? 0f : hideShift * 2)
+                .setDuration(home ? 460 : 280).setStartDelay(home ? 140 : 0).setInterpolator(EASE).start();
+        tooltip.animate().alpha(0f).setDuration(100).start();
+
+        if (wasHome != home) {
+            animateDim(home ? 0f : 0.55f, dur);
+        }
+        if (home) {
             resumeTimer();
         } else {
             pauseTimer();
         }
     }
 
-    // ----------------------------------------------------------------- launching
+    private void animateDim(float to, long dur) {
+        if (dimAnim != null) {
+            dimAnim.cancel();
+        }
+        dimAnim = ValueAnimator.ofFloat(pageDim.getAlpha(), to);
+        dimAnim.setDuration(dur);
+        dimAnim.setInterpolator(EASE);
+        dimAnim.addUpdateListener(a -> {
+            float v = (Float) a.getAnimatedValue();
+            pageDim.setAlpha(v);
+            backdrop.setDim(v);
+        });
+        dimAnim.start();
+    }
+
+    // ================================================================== launching
 
     private void launchHero(HeroItem item) {
         if (item.deepLink != null) {
@@ -1728,7 +2051,7 @@ public class HomeActivity extends Activity {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             i.setPackage(item.pkg);
             if (PKG_NETFLIX.equals(item.pkg)) {
-                i.putExtra("source", "30"); // Netflix TV deep-link source hint
+                i.putExtra("source", "30");
             }
             if (tryStart(i)) {
                 return;
@@ -1753,13 +2076,6 @@ public class HomeActivity extends Activity {
         }
     }
 
-    private void openInputs() {
-        if (tryStart(new Intent("com.android.tv.action.VIEW_INPUTS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))) {
-            return;
-        }
-        launchApp(PKG_LIVE);
-    }
-
     private void openSystemSettings() {
         if (!tryStart(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))) {
             Toast.makeText(this, "Settings unavailable", Toast.LENGTH_SHORT).show();
@@ -1775,7 +2091,50 @@ public class HomeActivity extends Activity {
         }
     }
 
-    // ----------------------------------------------------------------- utils
+    // ================================================================== small helpers
+
+    private LinearLayout pill() {
+        LinearLayout p = new LinearLayout(this);
+        p.setOrientation(LinearLayout.HORIZONTAL);
+        p.setGravity(Gravity.CENTER_VERTICAL);
+        p.setPadding(dp(18), 0, dp(22), 0);
+        p.setFocusable(true);
+        p.setClickable(true);
+        return p;
+    }
+
+    private GradientDrawable pillBg(int fill, int stroke) {
+        GradientDrawable g = new GradientDrawable();
+        g.setCornerRadius(dp(21));
+        g.setColor(fill);
+        if (stroke != 0) {
+            g.setStroke(Math.max(1, dp(1)), stroke);
+        }
+        return g;
+    }
+
+    private TextView pillText(String s, int color) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextColor(color);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        t.setPadding(dp(8), 0, 0, 0);
+        return t;
+    }
+
+    private ImageView icon(int res, int sizeDp) {
+        ImageView iv = new ImageView(this);
+        iv.setImageResource(res);
+        iv.setLayoutParams(new LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp)));
+        return iv;
+    }
+
+    private void focusScale(View v, boolean focused, float scale) {
+        v.animate().scaleX(focused ? scale : 1f).scaleY(focused ? scale : 1f)
+                .setDuration(focused ? 240 : 180).setInterpolator(EASE).start();
+        v.setTranslationZ(focused ? dp(6) : 0f);
+    }
 
     private int dp(float v) {
         return Math.round(v * density);

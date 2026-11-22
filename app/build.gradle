@@ -10,8 +10,8 @@ android {
         applicationId "com.gathin.tvhome"
         minSdk 23
         targetSdk 34
-        versionCode 34
-        versionName "3.4-glass"
+        versionCode 35
+        versionName "3.5-glass"
     }
 
     buildTypes {
@@ -26,5 +26,3 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 }
-
-// No third-party dependencies: the redesigned home screen uses only the Android framework.

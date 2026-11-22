@@ -6,7 +6,7 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.view.View;
 
-/** Non-focusable horizontal slider (0-100). The menu row owns focus and drives the value. */
+/** Non-focusable 0-100 slider; the menu row owns focus and drives the value. */
 public class SliderView extends View {
 
     private final Paint track = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -14,7 +14,9 @@ public class SliderView extends View {
     private final Paint thumb = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF r = new RectF();
     private final float density;
+    private float shown;
     private int value;
+    private android.animation.ValueAnimator anim;
 
     public SliderView(Context context) {
         super(context);
@@ -22,14 +24,21 @@ public class SliderView extends View {
         track.setColor(0x40FFFFFF);
         fill.setColor(0xFFFFFFFF);
         thumb.setColor(0xFFFFFFFF);
-        thumb.setShadowLayer(3 * density, 0, density, 0x66000000);
-        setLayerType(LAYER_TYPE_SOFTWARE, null); // needed for the thumb shadow
         setFocusable(false);
     }
 
     public void setValue(int v) {
         value = Math.max(0, Math.min(100, v));
-        invalidate();
+        if (anim != null) {
+            anim.cancel();
+        }
+        anim = android.animation.ValueAnimator.ofFloat(shown, value);
+        anim.setDuration(140);
+        anim.addUpdateListener(a -> {
+            shown = (Float) a.getAnimatedValue();
+            invalidate();
+        });
+        anim.start();
     }
 
     public int getValue() {
@@ -45,7 +54,7 @@ public class SliderView extends View {
         float cy = getHeight() / 2f;
         r.set(left, cy - h / 2, right, cy + h / 2);
         canvas.drawRoundRect(r, h, h, track);
-        float x = left + (right - left) * value / 100f;
+        float x = left + (right - left) * shown / 100f;
         r.set(left, cy - h / 2, x, cy + h / 2);
         canvas.drawRoundRect(r, h, h, fill);
         canvas.drawCircle(x, cy, thumbR, thumb);

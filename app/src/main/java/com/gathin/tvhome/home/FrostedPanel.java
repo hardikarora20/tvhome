@@ -5,48 +5,74 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.Rect;
 import android.graphics.RectF;
-import android.view.View;
 import android.widget.FrameLayout;
 
 /**
- * Frosted-glass container.
- * Android views cannot sample what is drawn behind them (true backdrop blur), so the panel
- * snapshots the hero layer region underneath itself, blurs it by down/up-sampling, then draws:
- *   blurred backdrop -> dark tint -> children -> 1px translucent rim.
- * Call {@link #capture(View)} whenever the backdrop or the panel position changes.
+ * Frosted-glass container. Draws the slice of the shared blurred {@link Backdrop} that is
+ * under it in real time (no snapshot lag), then a tint, its children and a 1px rim.
+ * Children are NOT clipped, so focused tiles can scale and glow past the panel edge.
  */
 public class FrostedPanel extends FrameLayout {
 
-    private final Paint bitmapPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+    private final Paint bmpPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
     private final Paint tintPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint dimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint rimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Path clipPath = new Path();
+    private final Paint sheenPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path clip = new Path();
     private final RectF rect = new RectF();
     private final RectF rimRect = new RectF();
-    private final int[] srcLoc = new int[2];
-    private final int[] selfLoc = new int[2];
+    private final Rect src = new Rect();
+    private final int[] loc = new int[2];
 
-    private Bitmap blurred;
+    private Backdrop backdrop;
     private float radius;
+    private int screenW = 1;
+    private int screenH = 1;
 
     public FrostedPanel(Context context) {
         super(context);
         setWillNotDraw(false);
+        setClipChildren(false);
+        setClipToPadding(false);
         tintPaint.setColor(0x8C141418);
+        dimPaint.setColor(0xFF000000);
         rimPaint.setStyle(Paint.Style.STROKE);
         rimPaint.setColor(0x33FFFFFF);
         rimPaint.setStrokeWidth(1f);
+        sheenPaint.setStyle(Paint.Style.STROKE);
+        sheenPaint.setStrokeWidth(1f);
+        sheenPaint.setColor(0x14FFFFFF);
+    }
+
+    void attach(Backdrop b, int screenWidth, int screenHeight) {
+        backdrop = b;
+        screenW = Math.max(1, screenWidth);
+        screenH = Math.max(1, screenHeight);
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (backdrop != null) {
+            backdrop.register(this);
+        }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        if (backdrop != null) {
+            backdrop.unregister(this);
+        }
+        super.onDetachedFromWindow();
     }
 
     public void setCornerRadius(float px) {
         radius = px;
-        rebuildPath();
+        rebuild();
         invalidate();
-    }
-
-    public float getCornerRadius() {
-        return radius;
     }
 
     public void setTint(int argb) {
@@ -57,63 +83,42 @@ public class FrostedPanel extends FrameLayout {
     public void setRim(int argb, float widthPx) {
         rimPaint.setColor(argb);
         rimPaint.setStrokeWidth(widthPx);
-        rebuildPath();
+        rebuild();
         invalidate();
     }
 
     @Override
-    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        super.onSizeChanged(w, h, oldw, oldh);
-        rebuildPath();
+    protected void onSizeChanged(int w, int h, int ow, int oh) {
+        super.onSizeChanged(w, h, ow, oh);
+        rebuild();
     }
 
-    private void rebuildPath() {
+    private void rebuild() {
         rect.set(0, 0, getWidth(), getHeight());
         float half = rimPaint.getStrokeWidth() / 2f;
         rimRect.set(half, half, getWidth() - half, getHeight() - half);
-        clipPath.reset();
-        clipPath.addRoundRect(rect, radius, radius, Path.Direction.CW);
-    }
-
-    /** Snapshot + blur the part of {@code source} that sits behind this panel. */
-    public void capture(View source) {
-        if (source == null || getWidth() == 0 || getHeight() == 0
-                || source.getWidth() == 0) {
-            return;
-        }
-        final int down = 10;
-        int w = Math.max(1, getWidth() / down);
-        int h = Math.max(1, getHeight() / down);
-        try {
-            source.getLocationInWindow(srcLoc);
-            getLocationInWindow(selfLoc);
-            Bitmap small = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-            Canvas c = new Canvas(small);
-            c.scale(1f / down, 1f / down);
-            c.translate(srcLoc[0] - selfLoc[0], srcLoc[1] - selfLoc[1]);
-            source.draw(c);
-            // Second down/up pass widens the blur kernel cheaply.
-            Bitmap tiny = Bitmap.createScaledBitmap(small, Math.max(1, w / 3), Math.max(1, h / 3), true);
-            Bitmap result = Bitmap.createScaledBitmap(tiny, w, h, true);
-            small.recycle();
-            tiny.recycle();
-            Bitmap old = blurred;
-            blurred = result;
-            if (old != null && old != result) {
-                old.recycle();
-            }
-            invalidate();
-        } catch (Throwable ignored) {
-            // Out of memory or detached view: keep the plain tint.
-        }
+        clip.reset();
+        clip.addRoundRect(rect, radius, radius, Path.Direction.CW);
     }
 
     @Override
     protected void dispatchDraw(Canvas canvas) {
         int save = canvas.save();
-        canvas.clipPath(clipPath);
-        if (blurred != null && !blurred.isRecycled()) {
-            canvas.drawBitmap(blurred, null, rect, bitmapPaint);
+        canvas.clipPath(clip);
+        if (backdrop != null) {
+            getLocationInWindow(loc);
+            Bitmap prev = backdrop.previous();
+            Bitmap cur = backdrop.current();
+            if (prev != null && backdrop.mix() < 1f) {
+                drawSlice(canvas, prev, 255);
+            }
+            if (cur != null) {
+                drawSlice(canvas, cur, Math.round(255 * backdrop.mix()));
+            }
+            if (backdrop.dim() > 0f) {
+                dimPaint.setAlpha(Math.round(255 * backdrop.dim()));
+                canvas.drawRect(rect, dimPaint);
+            }
         }
         canvas.drawRect(rect, tintPaint);
         canvas.restoreToCount(save);
@@ -121,12 +126,18 @@ public class FrostedPanel extends FrameLayout {
         canvas.drawRoundRect(rimRect, radius, radius, rimPaint);
     }
 
-    @Override
-    protected void onDetachedFromWindow() {
-        super.onDetachedFromWindow();
-        if (blurred != null) {
-            blurred.recycle();
-            blurred = null;
+    private void drawSlice(Canvas canvas, Bitmap bmp, int alpha) {
+        if (bmp.isRecycled() || alpha <= 0) {
+            return;
         }
+        float sx = bmp.getWidth() / (float) screenW;
+        float sy = bmp.getHeight() / (float) screenH;
+        // Compensate for our own scale (menus animate in with a small scale).
+        float w = getWidth() * getScaleX();
+        float h = getHeight() * getScaleY();
+        src.set(Math.round(loc[0] * sx), Math.round(loc[1] * sy),
+                Math.round((loc[0] + w) * sx), Math.round((loc[1] + h) * sy));
+        bmpPaint.setAlpha(alpha);
+        canvas.drawBitmap(bmp, src, rect, bmpPaint);
     }
 }

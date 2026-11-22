@@ -3,17 +3,22 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.software.live_tv" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <!-- Optional: lets the Brightness slider change the system brightness (granted via
-         Settings > Apps > Special access > Modify system settings, or adb). Without it the
-         slider still changes brightness while the home screen is visible. -->
+    <!-- Brightness: system-wide dim layer (grant with adb, see README). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- App long-press menu: Uninstall. -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- Android 11+ package visibility: needed to read app banners and launch intents. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -27,11 +32,10 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
-        <package android:name="com.google.android.tv" />
-        <package android:name="com.netflix.ninja" />
-        <package android:name="com.amazon.amazonvideo.livingroom" />
-        <package android:name="com.google.android.youtube.tv" />
-        <package android:name="in.startv.hotstar" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:host="android.media.tv" />
+        </intent>
     </queries>
 
     <application
@@ -39,6 +43,8 @@
         android:banner="@drawable/app_banner"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:largeHeap="true"
+        android:hardwareAccelerated="true"
         android:theme="@style/Theme.TvHome">
 
         <activity

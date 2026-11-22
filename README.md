@@ -1,52 +1,44 @@
-# TV Home - Glass redesign (com.gathin.tvhome)
+# TV Home - Glass redesign v3.5 (com.gathin.tvhome)
 
-Drop-in redesigned home screen matching the mockup: full-bleed auto-scrolling hero,
-single-line greeting, 3 circular glass icons + clock, frosted Settings dropdown,
-concentric frosted dock with a peeking app row, strict single-focus D-pad navigation.
+## Build
+1. Open this folder in Android Studio (JDK 17) and let Gradle sync.
+2. Build > Build APK(s) (or `gradlew assembleRelease`), then `adb install -r app-release.apk`.
+3. Press Home and pick "TV Home". Unless it is signed with your original keystore, uninstall the old launcher first.
 
-## Build (standalone)
-1. Open this folder in Android Studio (Koala or newer; JDK 17). Let it sync. It creates the Gradle wrapper jar if it is missing.
-2. Build > Build APK(s), or run `gradlew assembleRelease`.
-3. Install with `adb install -r app-release.apk`, press Home, and choose "TV Home" as the default.
+## One-time adb grants (recommended)
+```
+# Brightness that works in every app (dim layer). Without this, only the home screen dims.
+adb shell appops set com.gathin.tvhome SYSTEM_ALERT_WINDOW allow
+# Real backlight control on TVs that expose a vendor backlight setting (MediaTek/Realtek/TCL/Xiaomi...)
+adb shell pm grant com.gathin.tvhome android.permission.WRITE_SECURE_SETTINGS
+# Lets the slider also write SCREEN_BRIGHTNESS (for the few TVs that honour it)
+adb shell appops set com.gathin.tvhome WRITE_SETTINGS allow
+```
 
-The applicationId is `com.gathin.tvhome`, the same as your current launcher. If the new build
-is not signed with your original keystore, uninstall the old APK first, or change
-`applicationId` in app/build.gradle so both can be installed side by side.
-
-## Merge into your existing launcher source
-Copy these into your project:
-- `app/src/main/java/com/gathin/tvhome/home/` (HomeActivity, FrostedPanel, SliderView, IndicatorView, HeroItem)
-- `app/src/main/res/drawable/ic_h_*.xml` and `res/drawable-nodpi/hero_*.jpg`
-Then move the HOME / LEANBACK_LAUNCHER intent-filter from `.MainActivity` to `.home.HomeActivity`,
-or start HomeActivity from MainActivity. Copy the `<queries>` block and the ACCESS_NETWORK_STATE
-permission from this manifest. No new dependencies are needed (framework-only).
-
-## Where to change things (all in HomeActivity.java)
-| What | Where |
+## What changed in v3.5
+| Area | Change |
 |---|---|
-| Hero slides (title, metadata line, deep link, artwork) | `items[]` |
-| Slide duration | `SLIDE_MS` (8 s) |
-| Dock apps | `DOCK_PKGS` |
-| Branded mockup-style tiles instead of the apps' own banners | `STYLED_DOCK_TILES = true` |
-| Default user name | `DEFAULT_NAME` (the edited name is saved in SharedPreferences "glass_home") |
+| Inputs | The Inputs icon opens a frosted Inputs menu that lists the TV's HDMI / AV / Component / Antenna sources (TvInputManager), with Connected / No signal status and a green dot. Choosing one switches the TV to that source. |
+| Brightness | Uses a vendor backlight key if present, otherwise a TV-wide dim layer, otherwise dims the home screen. The value is saved and re-applied on start. |
+| Banner layout | The title, meta and button block has a fixed height and the dock is pinned at 70% of the screen height. Nothing moves when slides change. |
+| Titles | One typeface for every show (heavy sans, upper-case), auto-fitted to the same box. |
+| Banner navigation | The arrow buttons are gone. Slides change on their own every 8 s. In the Play / Watchlist row, Left past Play = previous slide and Right past the last button = next slide. The progress pill remains as an indicator only. |
+| New slide | The Great Indian Kapil Show (Netflix, title 81737430). |
+| Dock = Favourites | The dock shows your favourites (max 5; default Live Channels, Netflix, Prime Video, YouTube, JioHotstar), with branded custom tiles. All other apps appear in the rows below on the same grid. |
+| Long-press menu | Hold OK (or press Menu) on any app for Add to / Remove from Favourites, App info and Uninstall. |
+| Focus ring | The ring and soft glow are drawn in padding around the tile, outside the clipped card, so they are never cropped. |
+| Scrolling | Going down to the apps hides the header and banner text and dims the artwork. The glass behind the dock updates on every frame, not after the scroll finishes. |
+| Motion | Same easing curves throughout, longer cross-fades, a Ken Burns effect on the art, and no layout passes during animations. |
 
-Deep links:
-- JioHotstar: `https://www.hotstar.com/in/shows/<slug>/<id>`, launched with package `in.startv.hotstar`.
-- Netflix: `https://www.netflix.com/title/80241318`, launched with package `com.netflix.ninja` and extra source=30.
-If the target app can't handle the link, the app itself opens. If it isn't installed, the Play Store opens.
+## Banner artwork
+The bundled images are original placeholders (generated with Microsoft Copilot), not official posters.
+Official key art is copyrighted, so it isn't bundled. To use posters you have the rights to, push a file
+named after the slide id. It overrides the bundled art without a rebuild:
+```
+adb push poster.jpg /sdcard/Android/data/com.gathin.tvhome/files/hero/manifest.jpg
+```
+Slide ids: anupamaa, yrkkh, syhp, yft, manifest, kapil, live (.jpg/.png/.webp, 16:9, about 1920x1080).
 
-## Behaviour notes
-- Frosted glass: Android views can't blur what is drawn behind them, so FrostedPanel takes a blurred
-  snapshot of the hero underneath it. The snapshot refreshes after each slide change and after the
-  rows scroll.
-- Brightness: the slider always changes brightness while the home screen is on top. To make the change
-  system-wide, grant "Modify system settings":
-  `adb shell appops set com.gathin.tvhome WRITE_SETTINGS allow`
-- Volume: controls STREAM_MUSIC. The hardware volume keys also update the slider.
-- VPN dot: the green dot on Wi-Fi appears whenever any network has TRANSPORT_VPN. It is checked every second.
-- Inputs: tries `com.android.tv.action.VIEW_INPUTS` and falls back to the Live Channels app.
-- Settings menu: D-pad Up/Down moves between rows, Left/Right adjusts the sliders, OK selects, and Back closes the menu.
-  While it is open, every other key is swallowed and the dock is dimmed to 45%.
-- Home screen: Back returns focus to the first dock tile and scrolls back up if you are in the app rows.
-- Hero artwork: original AI-generated placeholder images (generated with Microsoft Copilot), not
-  official show posters. Replace the `hero_*.jpg` files with licensed artwork if you have it.
+## Notes
+- Inputs: some vendor TVs (certain Coocaa/TCL/Xiaomi builds) don't expose their inputs to apps. On those, the menu shows "Live TV" and "Source menu" instead.
+- Edit slides in `items[]`, default favourites in `DEFAULT_FAVS`, and slide duration in `SLIDE_MS` (all in HomeActivity.java).

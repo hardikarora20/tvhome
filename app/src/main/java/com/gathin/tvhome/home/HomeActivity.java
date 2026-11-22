@@ -569,17 +569,19 @@ public class HomeActivity extends Activity {
 
         btnPlay = pill();
         final ImageView playIcon = icon(R.drawable.ic_h_play, 20);
-        playIcon.setColorFilter(0xFF111111, PorterDuff.Mode.SRC_IN);
+        final TextView playText = pillText("Play", Color.WHITE);
         btnPlay.addView(playIcon);
-        btnPlay.addView(pillText("Play", 0xFF111111));
-        btnPlay.setBackground(pillBg(0xEBFFFFFF, 0));
+        btnPlay.addView(playText);
+        btnPlay.setBackground(pillBg(0x4D1A1A1E, 0x40FFFFFF));   // same frosted style as the Open button
         buttons.addView(btnPlay, new LinearLayout.LayoutParams(-2, -1));
         btnPlay.setOnClickListener(v -> playHero(items[current], v));
         btnPlay.setOnFocusChangeListener((v, f) -> {
-            v.setBackground(pillBg(f ? 0xFFFFFFFF : 0xEBFFFFFF, 0));
+            v.setBackground(f ? pillBg(0xFFFFFFFF, 0) : pillBg(0x4D1A1A1E, 0x40FFFFFF));
+            int ink = f ? 0xFF111111 : Color.WHITE;
+            playIcon.setColorFilter(ink, PorterDuff.Mode.SRC_IN);
+            playText.setTextColor(ink);
             focusScale(v, f, 1.08f);
         });
-
         // Secondary frosted pill: "Open Netflix" / "Open JioHotstar" / "Channel 4".
         btnOpen = pill();
         openIcon = icon(R.drawable.ic_h_open, 18);

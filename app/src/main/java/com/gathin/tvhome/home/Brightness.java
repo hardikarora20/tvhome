@@ -13,24 +13,14 @@ import android.view.View;
 import android.view.WindowManager;
 
 /**
- * TV brightness. Most Android TV panels ignore Settings.System.SCREEN_BRIGHTNESS and the
- * window brightness (they drive the backlight through vendor picture settings), which is
- * why the previous slider did nothing on the TV. Strategy, in order:
- *
- *  1. Vendor backlight key (MediaTek / Realtek / TCL / Xiaomi / Hisense builds) written via
- *     WRITE_SECURE_SETTINGS - real backlight control when the key exists on this TV.
- *  2. Otherwise a system-wide dim layer (overlay window) - works on every TV and in every
- *     app once "Display over other apps" is allowed.
- *  3. Without the overlay permission, the home screen itself is dimmed (in-app layer).
- *
- * SCREEN_BRIGHTNESS is also written when allowed, for TVs that do honour it.
+ * TV brightness. Order: vendor backlight key (WRITE_SECURE_SETTINGS) -> TV-wide dim overlay
+ * ("Display over other apps") -> home-screen-only dim layer.
  */
 final class Brightness {
 
     private static final String KEY = "brightness";
-    private static final float MAX_DIM = 0.78f; // stays under Android 12's 0.8 obscuring limit
+    private static final float MAX_DIM = 0.78f;
 
-    /** Known vendor backlight settings (value range 0-100). Only keys already present are touched. */
     private static final String[] VENDOR_KEYS = {
             "picture_backlight", "tv_picture_backlight", "backlight", "tv_backlight",
             "mtk_backlight", "rtk_backlight", "picture_backlight_value", "backlight_value",
@@ -42,7 +32,7 @@ final class Brightness {
     private final View inAppDim;
     private View overlay;
     private String vendorKey;
-    private int vendorTable = -1; // 0 global, 1 system, 2 secure
+    private int vendorTable = -1;
 
     Brightness(Context ctx, SharedPreferences prefs, View inAppDim) {
         this.app = ctx.getApplicationContext();
@@ -63,7 +53,6 @@ final class Brightness {
         return Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(app);
     }
 
-    /** Apply and persist; returns the value actually applied (10-100). */
     int set(int value) {
         int v = Math.max(10, Math.min(100, value));
         prefs.edit().putInt(KEY, v).apply();

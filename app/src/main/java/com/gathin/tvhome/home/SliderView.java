@@ -1,5 +1,6 @@
 package com.gathin.tvhome.home;
 
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -16,7 +17,7 @@ public class SliderView extends View {
     private final float density;
     private float shown;
     private int value;
-    private android.animation.ValueAnimator anim;
+    private ValueAnimator anim;
 
     public SliderView(Context context) {
         super(context);
@@ -32,7 +33,7 @@ public class SliderView extends View {
         if (anim != null) {
             anim.cancel();
         }
-        anim = android.animation.ValueAnimator.ofFloat(shown, value);
+        anim = ValueAnimator.ofFloat(shown, value);
         anim.setDuration(140);
         anim.addUpdateListener(a -> {
             shown = (Float) a.getAnimatedValue();

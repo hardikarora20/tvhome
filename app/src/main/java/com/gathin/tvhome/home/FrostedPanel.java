@@ -10,9 +10,9 @@ import android.graphics.RectF;
 import android.widget.FrameLayout;
 
 /**
- * Frosted-glass container. Draws the slice of the shared blurred {@link Backdrop} that is
- * under it in real time (no snapshot lag), then a tint, its children and a 1px rim.
- * Children are NOT clipped, so focused tiles can scale and glow past the panel edge.
+ * Frosted-glass container: draws the slice of the shared blurred {@link Backdrop} under it
+ * in real time, then a tint, its children and a 1px rim. Children are not clipped, so
+ * focused tiles can scale and glow past the panel edge.
  */
 public class FrostedPanel extends FrameLayout {
 
@@ -20,7 +20,6 @@ public class FrostedPanel extends FrameLayout {
     private final Paint tintPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint dimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint rimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint sheenPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path clip = new Path();
     private final RectF rect = new RectF();
     private final RectF rimRect = new RectF();
@@ -42,9 +41,6 @@ public class FrostedPanel extends FrameLayout {
         rimPaint.setStyle(Paint.Style.STROKE);
         rimPaint.setColor(0x33FFFFFF);
         rimPaint.setStrokeWidth(1f);
-        sheenPaint.setStyle(Paint.Style.STROKE);
-        sheenPaint.setStrokeWidth(1f);
-        sheenPaint.setColor(0x14FFFFFF);
     }
 
     void attach(Backdrop b, int screenWidth, int screenHeight) {
@@ -132,7 +128,6 @@ public class FrostedPanel extends FrameLayout {
         }
         float sx = bmp.getWidth() / (float) screenW;
         float sy = bmp.getHeight() / (float) screenH;
-        // Compensate for our own scale (menus animate in with a small scale).
         float w = getWidth() * getScaleX();
         float h = getHeight() * getScaleY();
         src.set(Math.round(loc[0] * sx), Math.round(loc[1] * sy),

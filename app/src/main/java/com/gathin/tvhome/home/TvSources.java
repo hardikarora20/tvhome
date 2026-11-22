@@ -1,18 +1,21 @@
 package com.gathin.tvhome.home;
 
 import android.content.ActivityNotFoundException;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
 import android.media.tv.TvContract;
 import android.media.tv.TvInputInfo;
 import android.media.tv.TvInputManager;
+import android.net.Uri;
 import android.os.Build;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/** HDMI / AV / Component / Tuner sources from the Android TV input framework. */
+/** HDMI / AV / Tuner sources and channel lookup via the Android TV input framework. */
 final class TvSources {
 
     static final class Source {
@@ -20,7 +23,7 @@ final class TvSources {
         final String label;
         final int type;
         final boolean passthrough;
-        final int state; // TvInputManager.INPUT_STATE_*, -1 unknown
+        final int state;
 
         Source(String id, String label, int type, boolean passthrough, int state) {
             this.id = id;
@@ -30,17 +33,9 @@ final class TvSources {
             this.state = state;
         }
 
-        boolean connected() {
-            return state == TvInputManager.INPUT_STATE_CONNECTED;
-        }
-
-        boolean isTuner() {
-            return type == TvInputInfo.TYPE_TUNER;
-        }
-
-        boolean isHdmi() {
-            return type == TvInputInfo.TYPE_HDMI || type == TvInputInfo.TYPE_DVI;
-        }
+        boolean connected() { return state == TvInputManager.INPUT_STATE_CONNECTED; }
+        boolean isTuner() { return type == TvInputInfo.TYPE_TUNER; }
+        boolean isHdmi() { return type == TvInputInfo.TYPE_HDMI || type == TvInputInfo.TYPE_DVI; }
 
         String status() {
             if (isTuner()) return "Antenna / Cable";
@@ -66,17 +61,9 @@ final class TvSources {
             return out;
         }
         for (TvInputInfo info : infos) {
-            if (info.isHidden(ctx)) {
-                continue;
-            }
-            // Only physical sources and tuners. Skip IPTV / app inputs.
-            if (!info.isPassthroughInput() && info.getType() != TvInputInfo.TYPE_TUNER) {
-                continue;
-            }
-            // HDMI-CEC child devices appear under their HDMI port; list ports only.
-            if (info.getParentId() != null) {
-                continue;
-            }
+            if (info.isHidden(ctx)) continue;
+            if (!info.isPassthroughInput() && info.getType() != TvInputInfo.TYPE_TUNER) continue;
+            if (info.getParentId() != null) continue;
             CharSequence custom = info.loadCustomLabel(ctx);
             CharSequence label = custom != null && custom.length() > 0 ? custom : info.loadLabel(ctx);
             int state = -1;
@@ -98,7 +85,6 @@ final class TvSources {
         return out;
     }
 
-    /** Switch the TV to a source. Passthrough URIs are handled by the system TV app. */
     static boolean open(Context ctx, Source s) {
         Intent i = new Intent(Intent.ACTION_VIEW, s.passthrough
                 ? TvContract.buildChannelUriForPassthroughInput(s.id)
@@ -110,6 +96,45 @@ final class TvSources {
         } catch (ActivityNotFoundException | SecurityException e) {
             return false;
         }
+    }
+
+    /**
+     * Finds the channel whose display number is {@code number} (e.g. "35", "734") in the TV
+     * provider and returns its content://android.media.tv/channel/<id> URI, or null.
+     * Exact match first, then the main number of a sub-channel ("35-1", "35.1").
+     * Needs READ_EPG_DATA / READ_TV_LISTINGS (requested at runtime).
+     */
+    static Uri findChannel(Context ctx, String number) {
+        ContentResolver cr = ctx.getContentResolver();
+        String[] proj = {TvContract.Channels._ID, TvContract.Channels.COLUMN_DISPLAY_NUMBER,
+                TvContract.Channels.COLUMN_BROWSABLE};
+        Uri best = null;
+        boolean bestBrowsable = false;
+        try (Cursor c = cr.query(TvContract.Channels.CONTENT_URI, proj, null, null, null)) {
+            if (c == null) {
+                return null;
+            }
+            while (c.moveToNext()) {
+                String num = c.getString(1);
+                if (num == null) continue;
+                num = num.trim();
+                boolean exact = num.equals(number);
+                boolean major = num.startsWith(number + "-") || num.startsWith(number + ".");
+                if (!exact && !major) continue;
+                boolean browsable = c.isNull(2) || c.getInt(2) == 1;
+                Uri u = TvContract.buildChannelUri(c.getLong(0));
+                if (exact && browsable) {
+                    return u;
+                }
+                if (best == null || (browsable && !bestBrowsable)) {
+                    best = u;
+                    bestBrowsable = browsable;
+                }
+            }
+        } catch (Exception e) {
+            return null; // no permission / no provider
+        }
+        return best;
     }
 
     static String typeName(int type) {

@@ -9,9 +9,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Shared, pre-blurred copy of the hero artwork (full screen, ~1/8 scale).
- * Frosted panels draw the slice of this bitmap that sits under them on EVERY frame,
- * so the glass stays correct while the dock scrolls or slides cross-fade.
+ * Shared, pre-blurred copy of the hero artwork (full screen, ~1/10 scale).
+ * Frosted panels draw the slice of this bitmap under them on every frame, so the glass
+ * stays correct while the dock scrolls or slides cross-fade.
  */
 final class Backdrop {
 
@@ -37,7 +37,6 @@ final class Backdrop {
     float mix() { return mix; }
     float dim() { return dim; }
 
-    /** Extra darkness applied to the glass (kept in sync with the page dim layer). */
     void setDim(float d) {
         dim = d;
         invalidateAll();

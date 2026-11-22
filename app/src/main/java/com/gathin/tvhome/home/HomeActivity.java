@@ -31,6 +31,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -75,15 +76,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Glassmorphic Android TV home screen (v3.5).
+ * Glassmorphic Android TV home screen (v3.6).
  *
- * Fixed layout, nothing reflows when the slide changes:
- *   heroLayer  - full-bleed artwork (two cross-fading ImageViews) + scrims + page dim
- *   heroInfo   - fixed-height block: title box, metadata line, Play + Watchlist
- *   indicator  - progress pill (bottom-right of the hero), not focusable
- *   lowerStack - dock (favourites) + all-apps rows; scrolls as one unit
- *   header     - greeting | Inputs, Wi-Fi, Settings | clock; fades away in the app rows
- *   menus      - Settings / Inputs / app long-press menu, all frosted and focus-trapped
+ * Home layout, top to bottom: header -> hero banner (large) -> favourites dock pinned to the
+ * bottom edge. All other apps live below the screen and only appear when you press Down
+ * from the dock.
  */
 public class HomeActivity extends Activity {
 
@@ -94,11 +91,16 @@ public class HomeActivity extends Activity {
     private static final String KEY_WATCHLIST = "watchlist";
     private static final String KEY_FAVS = "favourites";
     private static final String KEY_DIM_HINT = "dim_hint_shown";
+    private static final String KEY_TV_PERM_ASKED = "tv_perm_asked";
     private static final String DEFAULT_NAME = "Hardik";
     private static final long SLIDE_MS = 8000L;
     private static final long FADE_MS = 900L;
     private static final int MAX_FAVS = 5;
     private static final int STEP = 5;
+    private static final int REQ_TV_PERM = 41;
+
+    private static final String PERM_EPG = "com.android.providers.tv.permission.READ_EPG_DATA";
+    private static final String PERM_LISTINGS = "android.permission.READ_TV_LISTINGS";
 
     private static final String PKG_LIVE = "com.google.android.tv";
     private static final String PKG_NETFLIX = "com.netflix.ninja";
@@ -109,34 +111,39 @@ public class HomeActivity extends Activity {
 
     private static final String DOT = "  \u2022  ";
 
+    /** Banner order: Anupamaa, YRKKH, TGIKS, Aaj Tak, Sony, SYHP, YFT, Live Channels. */
     private final HeroItem[] items = {
             new HeroItem("anupamaa", "Anupamaa",
                     "JioHotstar" + DOT + "Family Drama" + DOT + "Hindi" + DOT + "New Episodes Daily",
-                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/anupama/1260022017",
+                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/anupama/1260022017", null,
                     R.drawable.hero_anupamaa, true),
             new HeroItem("yrkkh", "Yeh Rishta Kya Kehlata Hai",
                     "JioHotstar" + DOT + "Romantic Family Drama" + DOT + "Hindi" + DOT + "New Episodes Daily",
-                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/yeh-rishta/586",
+                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/yeh-rishta/586", null,
                     R.drawable.hero_yrkkh, true),
+            new HeroItem("kapil", "The Great Indian Kapil Show",
+                    "Netflix" + DOT + "5 Seasons" + DOT + "Comedy Talk Show" + DOT + "Hindi",
+                    PKG_NETFLIX, "https://www.netflix.com/title/81737430", null,
+                    R.drawable.hero_kapil, true),
+            new HeroItem("aajtak", "Aaj Tak",
+                    "Live Channels" + DOT + "Channel 734" + DOT + "Hindi News" + DOT + "Live 24x7",
+                    PKG_LIVE, null, "734",
+                    R.drawable.hero_aajtak, false),
+            new HeroItem("sony", "Sony TV",
+                    "Live Channels" + DOT + "Channel 35" + DOT + "Hindi Entertainment" + DOT + "Live",
+                    PKG_LIVE, null, "35",
+                    R.drawable.hero_sony, false),
             new HeroItem("syhp", "Shayad Yahi Hai Pyaar",
                     "JioHotstar" + DOT + "Romance" + DOT + "Hindi" + DOT + "New Episodes",
-                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/shayad-yahi-hai-pyaar/1271646563",
+                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/shayad-yahi-hai-pyaar/1271646563", null,
                     R.drawable.hero_syhp, true),
             new HeroItem("yft", "Yeh Fitoor Tera",
                     "JioHotstar" + DOT + "Romance Drama" + DOT + "Hindi" + DOT + "New Episodes",
-                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/yeh-fitoor-tera/1271650854",
+                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/yeh-fitoor-tera/1271650854", null,
                     R.drawable.hero_yft, true),
-            new HeroItem("manifest", "Manifest",
-                    "Netflix" + DOT + "4 Seasons" + DOT + "Mystery Drama" + DOT + "Sci-Fi",
-                    PKG_NETFLIX, "https://www.netflix.com/title/80241318",
-                    R.drawable.hero_manifest, true),
-            new HeroItem("kapil", "The Great Indian Kapil Show",
-                    "Netflix" + DOT + "5 Seasons" + DOT + "Comedy Talk Show" + DOT + "Hindi",
-                    PKG_NETFLIX, "https://www.netflix.com/title/81737430",
-                    R.drawable.hero_kapil, true),
             new HeroItem("live", "Live Channels",
                     "Live Channels App" + DOT + "Live TV" + DOT + "All your channels in one place",
-                    PKG_LIVE, null,
+                    PKG_LIVE, null, null,
                     R.drawable.hero_live, false),
     };
 
@@ -162,8 +169,8 @@ public class HomeActivity extends Activity {
     private ImageView artB;
     private boolean bOnTop;
     private View pageDim;
-    private final Bitmap[] artCache = new Bitmap[7];
-    private final Bitmap[] blurCache = new Bitmap[7];
+    private final Bitmap[] artCache;
+    private final Bitmap[] blurCache;
 
     private FrameLayout header;
     private TextView greeting;
@@ -217,6 +224,8 @@ public class HomeActivity extends Activity {
     private ValueAnimator dimAnim;
     private int shiftedRow = -1;
     private boolean menuConfirmDown;
+    private HeroItem pendingTune;
+    private final Map<String, Uri> channelCache = new HashMap<>();
     private BroadcastReceiver packageReceiver;
 
     /** Frosted, focus-trapped popup. */
@@ -231,6 +240,11 @@ public class HomeActivity extends Activity {
 
     private interface Adjust {
         void by(int delta);
+    }
+
+    public HomeActivity() {
+        artCache = new Bitmap[items.length];
+        blurCache = new Bitmap[items.length];
     }
 
     // ================================================================== lifecycle
@@ -347,16 +361,21 @@ public class HomeActivity extends Activity {
         int contentW = screenW - 2 * margin;
         dockPad = dp(15);
         tileGap = dp(26);
-        tilePad = dp(9);           // room around each tile for the focus ring + glow
+        tilePad = dp(9);
         tileRadius = dp(12);
         tileW = (contentW - 2 * dockPad - 4 * tileGap) / 5;
         tileH = Math.round(tileW * 0.56f);
-        dockTop = Math.round(screenH * 0.70f);
 
-        titleBoxH = dp(86);
-        titleMaxW = Math.round(screenW * 0.56f);
-        heroH = titleBoxH + dp(8) + dp(20) + dp(22) + dp(42);
-        heroTop = dockTop - dp(28) - heroH;
+        // Dock pinned to the bottom edge; equal breathing room under it as at the sides.
+        int dockH = tileH + 2 * dockPad;
+        int bottomGap = Math.max(dp(26), Math.round(margin * 0.5f));
+        dockTop = screenH - bottomGap - dockH;
+
+        // Title: at most ~38% of the banner width, up to 2 lines, in a box that never resizes.
+        titleMaxW = Math.round(screenW * 0.38f);
+        titleBoxH = dp(104);
+        heroH = titleBoxH + dp(10) + dp(20) + dp(22) + dp(42);
+        heroTop = dockTop - dp(34) - heroH;
     }
 
     // ================================================================== hero art
@@ -379,12 +398,12 @@ public class HomeActivity extends Activity {
         View left = new View(this);
         left.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                 new int[]{0xA6000000, 0x40000000, 0x00000000}));
-        layer.addView(left, new FrameLayout.LayoutParams(Math.round(screenW * 0.62f), -1, Gravity.START));
+        layer.addView(left, new FrameLayout.LayoutParams(Math.round(screenW * 0.58f), -1, Gravity.START));
 
         View bottom = new View(this);
         bottom.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
-                new int[]{0xF2000000, 0xBF000000, 0x40000000, 0x00000000}));
-        layer.addView(bottom, new FrameLayout.LayoutParams(-1, Math.round(screenH * 0.60f), Gravity.BOTTOM));
+                new int[]{0xE6000000, 0x99000000, 0x26000000, 0x00000000}));
+        layer.addView(bottom, new FrameLayout.LayoutParams(-1, Math.round(screenH * 0.45f), Gravity.BOTTOM));
 
         pageDim = new View(this);
         pageDim.setBackgroundColor(Color.BLACK);
@@ -400,9 +419,8 @@ public class HomeActivity extends Activity {
     }
 
     /**
-     * Artwork for slide i. A file named {@code <id>.jpg} / {@code <id>.png} in
-     * Android/data/com.gathin.tvhome/files/hero/ overrides the bundled image, so official
-     * posters you have rights to can be dropped in without rebuilding.
+     * Artwork for slide i. A file named {@code <id>.jpg/.png/.webp} in
+     * Android/data/com.gathin.tvhome/files/hero/ overrides the bundled image.
      */
     private Bitmap loadArt(int i) {
         File dir = getExternalFilesDir("hero");
@@ -439,7 +457,6 @@ public class HomeActivity extends Activity {
     private Bitmap makeBlur(Bitmap art) {
         int w = Math.max(16, screenW / 10);
         int h = Math.max(9, screenH / 10);
-        // centre-crop to the screen aspect, like the ImageView does
         float scale = Math.max(w / (float) art.getWidth(), h / (float) art.getHeight());
         int cw = Math.round(w / scale);
         int ch = Math.round(h / scale);
@@ -484,7 +501,7 @@ public class HomeActivity extends Activity {
         heroInfo.setOrientation(LinearLayout.VERTICAL);
         heroInfo.setClipChildren(false);
         heroInfo.setClipToPadding(false);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.round(screenW * 0.62f), heroH,
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.round(screenW * 0.56f), heroH,
                 Gravity.TOP | Gravity.START);
         lp.leftMargin = margin;
         lp.topMargin = heroTop;
@@ -492,19 +509,18 @@ public class HomeActivity extends Activity {
 
         heroText = new LinearLayout(this);
         heroText.setOrientation(LinearLayout.VERTICAL);
-        heroInfo.addView(heroText, new LinearLayout.LayoutParams(-1, titleBoxH + dp(8) + dp(20)));
+        heroInfo.addView(heroText, new LinearLayout.LayoutParams(-1, titleBoxH + dp(10) + dp(20)));
 
-        // One typeface for every title: heavy sans, upper-case, auto-fit into a fixed box.
+        // Same typeface for every title: heavy sans, upper-case, bottom-aligned in a fixed box.
         heroTitle = new TextView(this);
         heroTitle.setTextColor(Color.WHITE);
         heroTitle.setTypeface(Typeface.create("sans-serif-black", Typeface.BOLD));
-        heroTitle.setAllCaps(true);
         heroTitle.setLetterSpacing(0.015f);
         heroTitle.setIncludeFontPadding(false);
         heroTitle.setGravity(Gravity.BOTTOM | Gravity.START);
         heroTitle.setShadowLayer(18 * density, 0, 2 * density, 0x8C000000);
-        heroTitle.setLineSpacing(0f, 0.92f);
-        heroText.addView(heroTitle, new LinearLayout.LayoutParams(titleMaxW, titleBoxH));
+        heroTitle.setLineSpacing(0f, 0.9f);
+        heroText.addView(heroTitle, new LinearLayout.LayoutParams(titleMaxW + dp(8), titleBoxH));
 
         heroMeta = new TextView(this);
         heroMeta.setTextColor(0xD9FFFFFF);
@@ -514,7 +530,7 @@ public class HomeActivity extends Activity {
         heroMeta.setShadowLayer(6 * density, 0, density, 0x99000000);
         heroMeta.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-1, dp(20));
-        mlp.topMargin = dp(8);
+        mlp.topMargin = dp(10);
         heroText.addView(heroMeta, mlp);
 
         LinearLayout buttons = new LinearLayout(this);
@@ -568,8 +584,7 @@ public class HomeActivity extends Activity {
         final HeroItem item = items[current];
         Bitmap bmp = art(current);
 
-        // artB sits above artA. Bring the new art in by fading B in, or by placing it in A
-        // and fading B out - z-order never changes, so nothing re-lays out mid-animation.
+        // artB sits above artA; z-order never changes, so nothing re-lays out mid-animation.
         final ImageView incoming;
         artB.animate().cancel();
         if (!animate) {
@@ -634,22 +649,68 @@ public class HomeActivity extends Activity {
         }
     }
 
-    /** Largest size (56sp -> 30sp) that fits one line; at 30sp allow two lines. Box never resizes. */
+    /**
+     * Title fitting (box width = ~38% of the screen, box height fixed):
+     *  - short titles stay on one line at up to 56sp (never below 40sp on one line);
+     *  - longer titles break into two balanced lines at a word boundary, e.g.
+     *    "THE GREAT INDIAN / KAPIL SHOW", sized so the wider line fits (44sp down to 26sp).
+     */
     private void fitTitle(String title) {
-        String t = title.toUpperCase(Locale.getDefault());
-        Paint p = new Paint(heroTitle.getPaint());
-        float sp = 56f;
+        String t = title.toUpperCase(Locale.getDefault()).trim();
         float scaled = getResources().getDisplayMetrics().scaledDensity;
-        while (sp > 30f) {
+        Paint p = new Paint(heroTitle.getPaint());
+
+        p.setTextSize(40f * scaled);
+        boolean oneLine = p.measureText(t) <= titleMaxW || !t.contains(" ");
+        String text;
+        float maxSp;
+        float minSp;
+        if (oneLine) {
+            text = t;
+            maxSp = 56f;
+            minSp = 26f;
+        } else {
+            text = balancedBreak(t, p);
+            maxSp = 44f;
+            minSp = 26f;
+        }
+        float sp = maxSp;
+        while (sp > minSp) {
             p.setTextSize(sp * scaled);
-            if (p.measureText(t) <= titleMaxW) {
+            if (widestLine(text, p) <= titleMaxW) {
                 break;
             }
-            sp -= 2f;
+            sp -= 1f;
         }
-        heroTitle.setMaxLines(sp > 30f ? 1 : 2);
+        heroTitle.setMaxLines(oneLine ? 1 : 2);
         heroTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
-        heroTitle.setText(title);
+        heroTitle.setText(text);
+    }
+
+    /** Word break that minimises the wider of the two lines; ties favour a longer first line. */
+    private static String balancedBreak(String t, Paint p) {
+        String[] words = t.split("\\s+");
+        String best = t;
+        float bestW = Float.MAX_VALUE;
+        for (int i = 1; i < words.length; i++) {
+            String a = TextUtils.join(" ", Arrays.copyOfRange(words, 0, i));
+            String b = TextUtils.join(" ", Arrays.copyOfRange(words, i, words.length));
+            float wa = p.measureText(a);
+            float w = Math.max(wa, p.measureText(b));
+            if (w < bestW - 0.5f || (Math.abs(w - bestW) <= 0.5f && wa >= w)) {
+                bestW = w;
+                best = a + "\n" + b;
+            }
+        }
+        return best;
+    }
+
+    private static float widestLine(String text, Paint p) {
+        float w = 0f;
+        for (String line : text.split("\n")) {
+            w = Math.max(w, p.measureText(line));
+        }
+        return w;
     }
 
     private void updateWatchVisibility(HeroItem item, boolean animate) {
@@ -743,11 +804,15 @@ public class HomeActivity extends Activity {
         dockRow.setClipToPadding(false);
         dock.addView(dockRow, new FrameLayout.LayoutParams(-1, -1));
 
+        // All other apps: below the screen edge and invisible until you scroll down.
         rowsBox = new LinearLayout(this);
         rowsBox.setOrientation(LinearLayout.VERTICAL);
         rowsBox.setClipChildren(false);
         rowsBox.setClipToPadding(false);
-        lowerStack.addView(rowsBox, new LinearLayout.LayoutParams(-1, -2));
+        rowsBox.setAlpha(0f);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+        rlp.topMargin = Math.max(dp(40), screenH - dockTop - (tileH + 2 * dockPad));
+        lowerStack.addView(rowsBox, rlp);
     }
 
     private List<String> favourites() {
@@ -765,7 +830,6 @@ public class HomeActivity extends Activity {
         prefs.edit().putString(KEY_FAVS, TextUtils.join(",", favs)).apply();
     }
 
-    /** Rebuild dock (favourites) and the app rows. Keeps focus on {@code focusPkg} if given. */
     private void rebuildApps(String focusPkg) {
         PackageManager pm = getPackageManager();
         dockRow.removeAllViews();
@@ -799,7 +863,6 @@ public class HomeActivity extends Activity {
             dockRow.addView(empty, tileParams(slot));
         }
 
-        // All other TV apps, in rows of 5 that share the dock's exact column grid.
         Intent q = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
         List<ResolveInfo> found = pm.queryIntentActivities(q, 0);
         Set<String> skip = new HashSet<>(favs);
@@ -824,7 +887,7 @@ public class HomeActivity extends Activity {
                 row.setClipToPadding(false);
                 row.setPadding(dockPad - tilePad, 0, dockPad - tilePad, 0);
                 LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, tileH + 2 * tilePad);
-                rlp.topMargin = appRows.isEmpty() ? dp(22) - tilePad : tileGap - 2 * tilePad;
+                rlp.topMargin = appRows.isEmpty() ? 0 : tileGap - 2 * tilePad;
                 rowsBox.addView(row, rlp);
                 appRows.add(row);
             }
@@ -901,7 +964,6 @@ public class HomeActivity extends Activity {
         return i != null ? i.getComponent() : null;
     }
 
-    /** Custom branded art for the 5 default favourites; the app's TV banner for everything else. */
     private View tileContent(PackageManager pm, String pkg, ComponentName cn) {
         View styled = styledTile(pkg);
         if (styled != null) {
@@ -1241,7 +1303,7 @@ public class HomeActivity extends Activity {
         m.panel = new FrostedPanel(this);
         m.panel.attach(backdrop, screenW, screenH);
         m.panel.setCornerRadius(dp(22));
-        m.panel.setTint(0xBF18181B); // ~75% dark charcoal
+        m.panel.setTint(0xBF18181B);
         m.panel.setRim(0x33FFFFFF, Math.max(1f, density));
         m.panel.setElevation(dp(20));
         m.panel.setFocusable(false);
@@ -1296,14 +1358,9 @@ public class HomeActivity extends Activity {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(dp(14), 0, dp(8), 0);
-        if (sub != null && iconRes == R.drawable.ic_h_person) {
+        col.addView(smallText(label, Color.WHITE, 15));
+        if (sub != null) {
             col.addView(smallText(sub, 0x99FFFFFF, 11));
-            col.addView(smallText(label, Color.WHITE, 15));
-        } else {
-            col.addView(smallText(label, Color.WHITE, 15));
-            if (sub != null) {
-                col.addView(smallText(sub, 0x99FFFFFF, 11));
-            }
         }
         row.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
         if (trailingRes != 0) {
@@ -1358,8 +1415,7 @@ public class HomeActivity extends Activity {
         int h = m.panel.getMeasuredHeight();
         int[] a = new int[2];
         anchor.getLocationInWindow(a);
-        float ax = a[0] + anchor.getWidth() * anchor.getScaleX() / 2f
-                + (anchor.getWidth() - anchor.getWidth() * anchor.getScaleX()) / 2f;
+        float ax = a[0] + anchor.getWidth() / 2f;
         int x;
         int y;
         if (placement == BELOW_RIGHT_EDGE) {
@@ -1392,7 +1448,6 @@ public class HomeActivity extends Activity {
 
         tooltip.animate().alpha(0f).setDuration(100).start();
         pauseTimer();
-        // Visual priority on the menu: dim the dock + rows; focus moves into the menu.
         lowerStack.animate().alpha(0.42f).setDuration(240).setInterpolator(EASE).start();
         if (!m.rows.isEmpty()) {
             m.rows.get(0).requestFocus();
@@ -1622,8 +1677,7 @@ public class HomeActivity extends Activity {
         } catch (PackageManager.NameNotFoundException ignored) {
             // favourite that isn't installed
         }
-        final List<String> favs = favourites();
-        final boolean isFav = favs.contains(pkg);
+        final boolean isFav = favourites().contains(pkg);
 
         Menu m = newMenu(256);
         m.dynamic = true;
@@ -1836,7 +1890,6 @@ public class HomeActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
 
-    /** Focus trap: only menu rows are reachable; Left/Right drive sliders; Back closes. */
     private boolean handleMenuKey(int code, boolean down, KeyEvent event) {
         Menu m = activeMenu;
         View focused = getCurrentFocus();
@@ -1875,8 +1928,8 @@ public class HomeActivity extends Activity {
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
             case KeyEvent.KEYCODE_NUMPAD_ENTER:
-                // Only act on a press that STARTED inside the menu, so the key-up that ends a
-                // long-press on a tile doesn't immediately trigger the first menu row.
+                // Only act on a press that started inside the menu (ignores the key-up that
+                // ends a long-press on a tile).
                 if (down) {
                     if (event.getRepeatCount() == 0) {
                         menuConfirmDown = true;
@@ -1896,7 +1949,7 @@ public class HomeActivity extends Activity {
     }
 
     /**
-     * Row model: 0 header icons, 1 hero (Play, Watchlist), 2 dock, 3+ app rows.
+     * Rows: 0 header icons, 1 hero (Play, Watchlist), 2 dock, 3+ app rows.
      * In the hero row, Left past Play = previous slide, Right past the last button = next slide.
      */
     private boolean moveFocus(int dRow, int dCol) {
@@ -1961,12 +2014,12 @@ public class HomeActivity extends Activity {
     private View nearestByX(List<View> candidates, View from) {
         int[] loc = new int[2];
         from.getLocationOnScreen(loc);
-        float fx = loc[0] + from.getWidth() * from.getScaleX() / 2f;
+        float fx = loc[0] + from.getWidth() / 2f;
         View best = candidates.get(0);
         float bestD = Float.MAX_VALUE;
         for (View v : candidates) {
             v.getLocationOnScreen(loc);
-            float d = Math.abs(loc[0] + v.getWidth() * v.getScaleX() / 2f - fx);
+            float d = Math.abs(loc[0] + v.getWidth() / 2f - fx);
             if (d < bestD) {
                 bestD = d;
                 best = v;
@@ -1987,9 +2040,9 @@ public class HomeActivity extends Activity {
     }
 
     /**
-     * Home (index -1): hero + header visible, dock parked at 70%.
-     * App row k: the stack glides up so row k sits mid-screen; header and hero info fade away
-     * and the artwork dims. The dock glass re-samples the blurred backdrop every frame.
+     * Home (-1): header + banner visible, dock at the bottom edge, app rows hidden below.
+     * App row k: the stack glides up so row k sits mid-screen, the app rows fade in, and the
+     * header and banner text fade away while the artwork dims.
      */
     private void scrollToRow(int index) {
         if (index == shiftedRow) {
@@ -2008,6 +2061,8 @@ public class HomeActivity extends Activity {
         lowerStack.animate().cancel();
         lowerStack.animate().translationY(target).setDuration(dur).setInterpolator(EASE)
                 .setUpdateListener(a -> backdrop.invalidateAll()).start();
+        rowsBox.animate().alpha(home ? 0f : 1f).setDuration(home ? 220 : 420)
+                .setStartDelay(home ? 0 : 80).setInterpolator(EASE).start();
 
         float hideShift = -dp(24);
         header.animate().alpha(home ? 1f : 0f).translationY(home ? 0f : hideShift)
@@ -2046,6 +2101,10 @@ public class HomeActivity extends Activity {
     // ================================================================== launching
 
     private void launchHero(HeroItem item) {
+        if (item.channelNumber != null) {
+            tuneChannel(item);
+            return;
+        }
         if (item.deepLink != null) {
             Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(item.deepLink))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -2058,6 +2117,60 @@ public class HomeActivity extends Activity {
             }
         }
         launchApp(item.pkg);
+    }
+
+    /** Opens Live Channels directly on the slide's channel number (e.g. 35, 734). */
+    private void tuneChannel(final HeroItem item) {
+        Uri cached = channelCache.get(item.channelNumber);
+        if (cached != null && openChannel(cached)) {
+            return;
+        }
+        if (!hasTvReadPermission() && !prefs.getBoolean(KEY_TV_PERM_ASKED, false)
+                && Build.VERSION.SDK_INT >= 23) {
+            prefs.edit().putBoolean(KEY_TV_PERM_ASKED, true).apply();
+            pendingTune = item;
+            requestPermissions(new String[]{PERM_EPG, PERM_LISTINGS}, REQ_TV_PERM);
+            return;
+        }
+        new Thread(() -> {
+            final Uri uri = TvSources.findChannel(this, item.channelNumber);
+            handler.post(() -> {
+                if (uri != null) {
+                    channelCache.put(item.channelNumber, uri);
+                    if (openChannel(uri)) {
+                        return;
+                    }
+                }
+                Toast.makeText(this, "Opening Live Channels. Tune to " + item.channelNumber
+                        + " for " + item.title + ".", Toast.LENGTH_LONG).show();
+                launchApp(PKG_LIVE);
+            });
+        }, "channel-lookup").start();
+    }
+
+    private boolean openChannel(Uri uri) {
+        Intent i = new Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        i.setPackage(PKG_LIVE);
+        if (tryStart(i)) {
+            return true;
+        }
+        i.setPackage(null); // vendor TV app
+        return tryStart(i);
+    }
+
+    private boolean hasTvReadPermission() {
+        return checkSelfPermission(PERM_EPG) == PackageManager.PERMISSION_GRANTED
+                || checkSelfPermission(PERM_LISTINGS) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_TV_PERM && pendingTune != null) {
+            HeroItem item = pendingTune;
+            pendingTune = null;
+            tuneChannel(item);
+        }
     }
 
     private void launchApp(String pkg) {

@@ -13,14 +13,13 @@ import android.view.animation.PathInterpolator;
 import android.widget.FrameLayout;
 
 /**
- * App tile = an un-clipped wrapper with {@code pad} breathing room on every side, plus an
- * inner clipped rounded card. The focus ring and soft glow are drawn in the wrapper's
- * padding, so they can never be cropped by the card's own rounded clip.
+ * App tile = un-clipped wrapper with {@code pad} breathing room on every side + an inner
+ * clipped rounded card. The focus ring and glow are drawn in the wrapper's padding, so the
+ * card's rounded clip can never crop them.
  */
 public class TileView extends FrameLayout {
 
     final String pkg;
-    private final FrameLayout card;
     private final float radius;
     private final int pad;
     private final float d;
@@ -44,7 +43,7 @@ public class TileView extends FrameLayout {
         setLongClickable(true);
         setPadding(pad, pad, pad, pad);
 
-        card = new FrameLayout(ctx);
+        FrameLayout card = new FrameLayout(ctx);
         card.setOutlineProvider(new ViewOutlineProvider() {
             @Override
             public void getOutline(View view, Outline outline) {
@@ -84,7 +83,6 @@ public class TileView extends FrameLayout {
     @Override
     protected void dispatchDraw(Canvas canvas) {
         if (focusAmt > 0.01f) {
-            // Soft outer glow: a few widening, fading strokes around the card.
             float gap = 3.5f * d;
             for (int i = 3; i >= 1; i--) {
                 float w = i * 2.6f * d;

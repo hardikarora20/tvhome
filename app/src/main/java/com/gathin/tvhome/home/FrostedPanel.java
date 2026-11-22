@@ -9,11 +9,7 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.widget.FrameLayout;
 
-/**
- * Frosted-glass container: draws the slice of the shared blurred {@link Backdrop} under it
- * in real time, then a tint, its children and a 1px rim. Children are not clipped, so
- * focused tiles can scale and glow past the panel edge.
- */
+/** Frosted-glass container drawing the live blurred backdrop slice beneath it. */
 public class FrostedPanel extends FrameLayout {
 
     private final Paint bmpPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
@@ -118,8 +114,22 @@ public class FrostedPanel extends FrameLayout {
         }
         canvas.drawRect(rect, tintPaint);
         canvas.restoreToCount(save);
+        int save2 = canvas.save();
+        if (clipChildrenToShape) {
+            canvas.clipPath(clip);
+        }
         super.dispatchDraw(canvas);
+        canvas.restoreToCount(save2);
         canvas.drawRoundRect(rimRect, radius, radius, rimPaint);
+    }
+
+    /** Menus clip their (scrolling) content to the rounded shape; the dock does not,
+     *  so focused tiles can grow past its edge. */
+    private boolean clipChildrenToShape = true;
+
+    void setClipChildrenToShape(boolean clipIt) {
+        clipChildrenToShape = clipIt;
+        invalidate();
     }
 
     private void drawSlice(Canvas canvas, Bitmap bmp, int alpha) {

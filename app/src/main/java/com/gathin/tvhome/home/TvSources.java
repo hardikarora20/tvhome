@@ -98,12 +98,7 @@ final class TvSources {
         }
     }
 
-    /**
-     * Finds the channel whose display number is {@code number} (e.g. "35", "734") in the TV
-     * provider and returns its content://android.media.tv/channel/<id> URI, or null.
-     * Exact match first, then the main number of a sub-channel ("35-1", "35.1").
-     * Needs READ_EPG_DATA / READ_TV_LISTINGS (requested at runtime).
-     */
+    /** content://android.media.tv/channel/<id> for a display number like "734", or null. */
     static Uri findChannel(Context ctx, String number) {
         ContentResolver cr = ctx.getContentResolver();
         String[] proj = {TvContract.Channels._ID, TvContract.Channels.COLUMN_DISPLAY_NUMBER,
@@ -132,7 +127,7 @@ final class TvSources {
                 }
             }
         } catch (Exception e) {
-            return null; // no permission / no provider
+            return null;
         }
         return best;
     }

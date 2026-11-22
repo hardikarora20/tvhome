@@ -8,11 +8,7 @@ import android.view.animation.PathInterpolator;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Shared, pre-blurred copy of the hero artwork (full screen, ~1/10 scale).
- * Frosted panels draw the slice of this bitmap under them on every frame, so the glass
- * stays correct while the dock scrolls or slides cross-fade.
- */
+/** Shared pre-blurred hero artwork; frosted panels sample it every frame. */
 final class Backdrop {
 
     private Bitmap current;
@@ -75,7 +71,6 @@ final class Backdrop {
         }
     }
 
-    /** Fast 3-pass box blur (approximates a Gaussian) on a small bitmap. */
     static Bitmap blur(Bitmap src, int radius) {
         int w = src.getWidth();
         int h = src.getHeight();

@@ -1,37 +1,29 @@
-# TV Home - Glass redesign v3.6 (com.gathin.tvhome)
+# TV Home - Glass redesign v3.7 (com.gathin.tvhome)
 
-## Build
-Open this folder in Android Studio (JDK 17), then Build > Build APK(s) and `adb install -r`.
-Your poster images from v3.5 are kept as they were in res/drawable-nodpi.
+Build: open in Android Studio (JDK 17) -> Build > Build APK(s) -> `adb install -r`.
+Your poster images from the v3.6 build are kept (res/drawable-nodpi).
 
-## v3.6 changes
+## v3.7 changes
 | Area | Change |
 |---|---|
-| Layout | Header, then the banner, then the favourites dock pinned to the bottom edge. Other apps are hidden below the screen and slide in when you press Down from the dock. |
-| Titles | Limited to about 38% of the screen width. Long titles break into 2 balanced lines at a word boundary. |
-| New slides | Aaj Tak (channel 734) and Sony TV (channel 35). Play opens Live Channels on that channel. |
-| Order | Anupamaa, Yeh Rishta Kya Kehlata Hai, The Great Indian Kapil Show, Aaj Tak, Sony TV, Shayad Yahi Hai Pyaar, Yeh Fitoor Tera, Live Channels |
+| Banner buttons | Watchlist removed. Second pill opens the app: "Open JioHotstar", "Open Netflix", or "Channel 734" on Aaj Tak. Hidden on the Live Channels slide. |
+| Banner slides | Sony TV removed. Order: Anupamaa, YRKKH, Kapil Show, Aaj Tak, SYHP, YFT, Live Channels. |
+| Aaj Tak | Play opens Aaj Tak's official YouTube live stream (`youtube.com/channel/UCt4t-jeY85JegMlZ-E5UWtA/live`) in YouTube. Falls back to channel 734 in Live Channels. |
+| Screensaver | New moon icon (Inputs, Wi-Fi, Screensaver, Settings). Starts the Android screensaver immediately; falls back to the screensaver settings page. |
+| Menus | All menus scroll when they are taller than the screen (Inputs with many sources), with soft fading edges. |
+| Greeting | Morning 5-11, Afternoon 12-16, Evening 17-20, Good Night 21-23, "Up late" 0-4. |
+| Prime Video tile | Shows the full "prime video", auto-sized to fit on one line. |
+| Launch animation | The tile/button pops, a brand-coloured circle expands from it to fill the screen, the app fades in, and the veil fades away when you come back. |
+| Live Channels art | New banner: broadcast control room with a wall of screens. |
+| Banner speed | New Settings slider: 5-15 s per slide (default 8 s), 1 s per D-pad press, saved. |
 
-How the titles fit:
-- A title that fits on one line at 40sp or larger stays on one line (up to 56sp).
-- Otherwise it splits into two lines, sized 44sp down to 26sp, so the wider line fits.
-- Expected results: ANUPAMAA | YEH RISHTA KYA / KEHLATA HAI | THE GREAT INDIAN / KAPIL SHOW |
-  AAJ TAK | SONY TV | SHAYAD YAHI / HAI PYAAR | YEH FITOOR / TERA | LIVE CHANNELS
-
-## Channel slides
-Play looks up the channel number in the TV's channel list (TvContract) and opens
-content://android.media.tv/channel/<id>.
-- The first time, Android asks for permission to read TV listings. Allow it.
-- If the permission isn't granted, or the number isn't in the channel list, Live Channels opens with a hint to tune manually.
-
-Grant it without the prompt:
+## Grants (same as before)
 ```
+adb shell appops set com.gathin.tvhome SYSTEM_ALERT_WINDOW allow
+adb shell pm grant com.gathin.tvhome android.permission.WRITE_SECURE_SETTINGS
 adb shell pm grant com.gathin.tvhome com.android.providers.tv.permission.READ_EPG_DATA
 ```
-To change the numbers, edit "734" / "35" in `items[]` in HomeActivity.java.
 
 ## Poster override (no rebuild)
-```
-adb push poster.jpg /sdcard/Android/data/com.gathin.tvhome/files/hero/<id>.jpg
-```
-ids: anupamaa, yrkkh, kapil, aajtak, sony, syhp, yft, live
+`adb push poster.jpg /sdcard/Android/data/com.gathin.tvhome/files/hero/<id>.jpg`
+ids: anupamaa, yrkkh, kapil, aajtak, syhp, yft, live

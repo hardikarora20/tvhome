@@ -12,14 +12,11 @@ import android.view.ViewOutlineProvider;
 import android.view.animation.PathInterpolator;
 import android.widget.FrameLayout;
 
-/**
- * App tile = un-clipped wrapper with {@code pad} breathing room on every side + an inner
- * clipped rounded card. The focus ring and glow are drawn in the wrapper's padding, so the
- * card's rounded clip can never crop them.
- */
+/** Un-clipped wrapper + clipped rounded card; ring/glow live in the wrapper padding. */
 public class TileView extends FrameLayout {
 
     final String pkg;
+    int brandColor = 0xFF000000;
     private final float radius;
     private final int pad;
     private final float d;

@@ -12,10 +12,7 @@ import android.provider.Settings;
 import android.view.View;
 import android.view.WindowManager;
 
-/**
- * TV brightness. Order: vendor backlight key (WRITE_SECURE_SETTINGS) -> TV-wide dim overlay
- * ("Display over other apps") -> home-screen-only dim layer.
- */
+/** Vendor backlight key -> TV-wide dim overlay -> home-screen-only dim layer. */
 final class Brightness {
 
     private static final String KEY = "brightness";

@@ -132,9 +132,9 @@ public class HomeActivity extends Activity {
                     PKG_NETFLIX, "https://www.netflix.com/title/81737430", null,
                     "Open Netflix", R.drawable.hero_kapil),
             new HeroItem("aajtak", "Aaj Tak",
-                    "Live Stream" + DOT + "Hindi News" + DOT + "24x7" + DOT + "Channel 734",
+                    "Live Stream" + DOT + "Hindi News" + DOT + "24x7" + DOT + "Channel 4",
                     PKG_YOUTUBE, AAJTAK_LIVE, "734",
-                    "Channel 734", R.drawable.hero_aajtak),
+                    "Channel 4", R.drawable.hero_aajtak),
             new HeroItem("syhp", "Shayad Yahi Hai Pyaar",
                     "JioHotstar" + DOT + "Romance" + DOT + "Hindi" + DOT + "New Episodes",
                     PKG_HOTSTAR, "https://www.hotstar.com/in/shows/shayad-yahi-hai-pyaar/1271646563", null,
@@ -580,7 +580,7 @@ public class HomeActivity extends Activity {
             focusScale(v, f, 1.08f);
         });
 
-        // Secondary frosted pill: "Open Netflix" / "Open JioHotstar" / "Channel 734".
+        // Secondary frosted pill: "Open Netflix" / "Open JioHotstar" / "Channel 4".
         btnOpen = pill();
         openIcon = icon(R.drawable.ic_h_open, 18);
         btnOpen.addView(openIcon);

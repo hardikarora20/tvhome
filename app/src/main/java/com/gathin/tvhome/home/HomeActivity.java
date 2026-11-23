@@ -62,6 +62,8 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.graphics.Canvas;
+import android.os.SystemClock;
 
 import com.gathin.tvhome.R;
 
@@ -117,37 +119,11 @@ public class HomeActivity extends Activity {
 
     private static final String DOT = "  \u2022  ";
 
-    /** Banner order: Anupamaa, YRKKH, TGIKS, Aaj Tak, SYHP, YFT, Live Channels. */
-    private final HeroItem[] items = {
-            new HeroItem("anupamaa", "Anupamaa",
-                    "JioHotstar" + DOT + "Family Drama" + DOT + "Hindi" + DOT + "New Episodes Daily",
-                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/anupama/1260022017", null,
-                    "Open JioHotstar", R.drawable.hero_anupamaa),
-            new HeroItem("yrkkh", "Yeh Rishta Kya Kehlata Hai",
-                    "JioHotstar" + DOT + "Romantic Family Drama" + DOT + "Hindi" + DOT + "New Episodes Daily",
-                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/yeh-rishta/586", null,
-                    "Open JioHotstar", R.drawable.hero_yrkkh),
-            new HeroItem("kapil", "The Great Indian Kapil Show",
-                    "Netflix" + DOT + "5 Seasons" + DOT + "Comedy Talk Show" + DOT + "Hindi",
-                    PKG_NETFLIX, "https://www.netflix.com/title/81737430", null,
-                    "Open Netflix", R.drawable.hero_kapil),
-            new HeroItem("aajtak", "Aaj Tak",
-                    "Live Stream" + DOT + "Hindi News" + DOT + "24x7" + DOT + "Channel 4",
-                    PKG_YOUTUBE, AAJTAK_LIVE, "734",
-                    "Channel 4", R.drawable.hero_aajtak),
-            new HeroItem("syhp", "Shayad Yahi Hai Pyaar",
-                    "JioHotstar" + DOT + "Romance" + DOT + "Hindi" + DOT + "New Episodes",
-                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/shayad-yahi-hai-pyaar/1271646563", null,
-                    "Open JioHotstar", R.drawable.hero_syhp),
-            new HeroItem("yft", "Yeh Fitoor Tera",
-                    "JioHotstar" + DOT + "Romance Drama" + DOT + "Hindi" + DOT + "New Episodes",
-                    PKG_HOTSTAR, "https://www.hotstar.com/in/shows/yeh-fitoor-tera/1271650854", null,
-                    "Open JioHotstar", R.drawable.hero_yft),
-            new HeroItem("live", "Live Channels",
-                    "Live Channels App" + DOT + "Live TV" + DOT + "All your channels in one place",
-                    PKG_LIVE, null, null,
-                    null, R.drawable.hero_live),
-    };
+    private BannerConfig bannerConfig;
+    private HeroItem[] items;
+    private int bannerGeneration;
+    private boolean placeholderVisible;
+    private long lastBannerCheck;
 
     // ------------------------------------------------------------------ motion
 
@@ -175,8 +151,8 @@ public class HomeActivity extends Activity {
     private View launchVeil;
     private View launchSource;
     private boolean launching;
-    private final Bitmap[] artCache;
-    private final Bitmap[] blurCache;
+    private Bitmap[] artCache;
+    private Bitmap[] blurCache;
 
     private FrameLayout header;
     private TextView greeting;
@@ -234,7 +210,7 @@ public class HomeActivity extends Activity {
     private ValueAnimator dimAnim;
     private int shiftedRow = -1;
     private boolean menuConfirmDown;
-    private HeroItem pendingTune;
+    private String[] pendingTune;
     private final Map<String, Uri> channelCache = new HashMap<>();
     private BroadcastReceiver packageReceiver;
 
@@ -267,11 +243,6 @@ public class HomeActivity extends Activity {
         }
     }
 
-    public HomeActivity() {
-        artCache = new Bitmap[items.length];
-        blurCache = new Bitmap[items.length];
-    }
-
     // ================================================================== lifecycle
 
     @Override
@@ -280,6 +251,11 @@ public class HomeActivity extends Activity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         slideMs = bannerSeconds() * 1000L;
+
+        bannerConfig = BannerConfig.loadLocal(this);
+        items = bannerConfig.items.toArray(new HeroItem[0]);
+        artCache = new Bitmap[items.length];
+        blurCache = new Bitmap[items.length];
 
         DisplayMetrics dm = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getRealMetrics(dm);
@@ -336,6 +312,7 @@ public class HomeActivity extends Activity {
         handler.post(ticker);
         refreshVolume();
         revealHome();
+        maybeRefreshBanner();
         if (activeMenu == null && shiftedRow < 0) {
             resumeTimer();
         }
@@ -449,7 +426,10 @@ public class HomeActivity extends Activity {
         return iv;
     }
 
-    /** A file named {@code <id>.jpg/.png/.webp} in Android/data/.../files/hero/ overrides the bundled art. */
+        /**
+     * Slide art: an adb override named after the slide id (files/hero/<id>.jpg) first,
+     * then the "image" from banner.json. Never touches the network.
+     */
     private Bitmap loadArt(int i) {
         File dir = getExternalFilesDir("hero");
         if (dir != null) {
@@ -463,9 +443,7 @@ public class HomeActivity extends Activity {
                 }
             }
         }
-        BitmapFactory.Options o = new BitmapFactory.Options();
-        o.inPreferredConfig = Bitmap.Config.RGB_565;
-        return BitmapFactory.decodeResource(getResources(), items[i].artRes, o);
+        return BannerConfig.decodeImage(this, items[i].image, screenW);
     }
 
     private Bitmap decodeFile(File f) {
@@ -495,33 +473,119 @@ public class HomeActivity extends Activity {
         return Backdrop.blur(small, 3);
     }
 
-    private synchronized Bitmap art(int i) {
+     private synchronized Bitmap art(int i) {
+        if (i < 0 || i >= items.length) {
+            return placeholder(0);
+        }
         if (artCache[i] == null) {
             artCache[i] = loadArt(i);
         }
-        return artCache[i];
+        return artCache[i] != null ? artCache[i] : placeholder(i);
     }
 
     private synchronized Bitmap blurred(int i) {
+        if (i < 0 || i >= items.length) {
+            return null;
+        }
         if (blurCache[i] == null) {
             Bitmap a = art(i);
-            if (a != null) {
-                blurCache[i] = makeBlur(a);
+            if (artCache[i] == null) {
+                return makeBlur(a); // still a placeholder - don't cache it
             }
+            blurCache[i] = makeBlur(a);
         }
         return blurCache[i];
     }
 
+    /** Brand-colour gradient shown while a remote image is still downloading. */
+    private Bitmap placeholder(int i) {
+        int c = i < items.length && items[i].color != 0 ? items[i].color : 0xFF1C1C22;
+        Bitmap b = Bitmap.createBitmap(32, 18, Bitmap.Config.ARGB_8888);
+        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{blend(c, Color.BLACK, 0.35f), blend(c, Color.BLACK, 0.85f)});
+        g.setBounds(0, 0, 32, 18);
+        g.draw(new Canvas(b));
+        return b;
+    }
+
+    /** Downloads remote images, pre-blurs every slide, and swaps in real art for a placeholder. */
     private void preloadSlides() {
+        final int gen;
+        final HeroItem[] snap;
+        synchronized (this) {
+            gen = bannerGeneration;
+            snap = items;
+        }
         Thread t = new Thread(() -> {
-            for (int i = 0; i < items.length; i++) {
+            BannerConfig.prefetchImages(this, snap);
+            for (int i = 0; i < snap.length; i++) {
+                synchronized (this) {
+                    if (gen != bannerGeneration) {
+                        return;
+                    }
+                }
                 blurred(i);
+                final int idx = i;
+                handler.post(() -> {
+                    if (gen == bannerGeneration && idx == current && placeholderVisible
+                            && artCache[idx] != null) {
+                        placeholderVisible = false;
+                        (bOnTop ? artB : artA).setImageBitmap(artCache[idx]);
+                        backdrop.show(blurCache[idx], 400);
+                    }
+                });
             }
         }, "hero-preload");
         t.setPriority(Thread.MIN_PRIORITY);
         t.start();
     }
 
+    // ================================================================== banner.json
+
+    /** Called from onResume: picks up a pushed/edited override file, then the remote JSON. */
+    private void maybeRefreshBanner() {
+        if (BannerConfig.overrideStamp(this) != bannerConfig.overrideStamp) {
+            BannerConfig local = BannerConfig.loadLocal(this);
+            if (!local.raw.equals(bannerConfig.raw)) {
+                applyBanner(local);
+            } else {
+                bannerConfig = local;
+            }
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (lastBannerCheck != 0 && now - lastBannerCheck < 15 * 60 * 1000L) {
+            return;
+        }
+        lastBannerCheck = now;
+        final String url = bannerConfig.remoteUrl;
+        if (url == null) {
+            return;
+        }
+        final String shownRaw = bannerConfig.raw;
+        new Thread(() -> {
+            final BannerConfig fresh = BannerConfig.fetchRemote(this, url);
+            if (fresh == null || fresh.raw.equals(shownRaw)) {
+                return;
+            }
+            // Download the new images first so the switch doesn't flash placeholders.
+            BannerConfig.prefetchImages(this, fresh.items.toArray(new HeroItem[0]));
+            handler.post(() -> applyBanner(fresh));
+        }, "banner-refresh").start();
+    }
+
+    /** Swaps the whole banner to a new config with the normal slide transition. */
+    private void applyBanner(BannerConfig fresh) {
+        synchronized (this) {
+            bannerConfig = fresh;
+            items = fresh.items.toArray(new HeroItem[0]);
+            artCache = new Bitmap[items.length];
+            blurCache = new Bitmap[items.length];
+            bannerGeneration++;
+        }
+        indicator.setCount(items.length);
+        showSlide(0, true, 1);
+        preloadSlides();
+    }
     // ================================================================== hero info
 
     private void buildHeroInfo() {
@@ -582,7 +646,8 @@ public class HomeActivity extends Activity {
             playText.setTextColor(ink);
             focusScale(v, f, 1.08f);
         });
-        // Secondary frosted pill: "Open Netflix" / "Open JioHotstar" / "Channel 4".
+
+        // Secondary frosted pill: "Open Netflix" / "Open JioHotstar" / "Channel 734".
         btnOpen = pill();
         openIcon = icon(R.drawable.ic_h_open, 18);
         btnOpen.addView(openIcon);
@@ -613,6 +678,7 @@ public class HomeActivity extends Activity {
         current = (index + items.length) % items.length;
         final HeroItem item = items[current];
         Bitmap bmp = art(current);
+        placeholderVisible = artCache[current] == null;
 
         final ImageView incoming;
         artB.animate().cancel();
@@ -729,10 +795,19 @@ public class HomeActivity extends Activity {
         return w;
     }
 
-    private void updateOpenButton(HeroItem item, boolean animate) {
-        if (item.openLabel != null) {
-            openLabel.setText(item.openLabel);
-            openIcon.setImageResource(item.channelNumber != null ? R.drawable.ic_h_live : R.drawable.ic_h_open);
+     private void updateOpenButton(HeroItem item, boolean animate) {
+        BannerAction sec = item.secondary;
+        if (sec != null) {
+            String label = sec.label;
+            if (label == null) {
+                label = BannerAction.CHANNEL.equals(sec.type) && sec.number != null
+                        ? "Channel " + sec.number : "Open";
+            }
+            openLabel.setText(label);
+            boolean live = "live".equals(sec.icon)
+                    || (sec.icon == null && BannerAction.CHANNEL.equals(sec.type));
+            openIcon.setImageResource("play".equals(sec.icon) ? R.drawable.ic_h_play
+                    : (live ? R.drawable.ic_h_live : R.drawable.ic_h_open));
             if (btnOpen.getVisibility() != View.VISIBLE) {
                 btnOpen.setVisibility(View.VISIBLE);
                 btnOpen.setAlpha(0f);
@@ -2304,74 +2379,124 @@ public class HomeActivity extends Activity {
         dimAnim.start();
     }
 
-    // ================================================================== hero actions
+     // ================================================================== hero actions
 
-    /** Play: the show itself (deep link) or, for Aaj Tak, the YouTube live stream. */
+    /** Play button: runs the slide's "play" action from banner.json. */
     private void playHero(final HeroItem item, View source) {
-        int color = item.channelNumber != null ? 0xFFC8102E : brandColor(item.pkg);
-        launchWithFx(source, color, () -> {
-            if (item.deepLink != null) {
-                Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(item.deepLink))
+        final BannerAction a = item.play;
+        if (a == null) {
+            return;
+        }
+        int color = item.color != 0 ? item.color : brandColor(a.pkg != null ? a.pkg : "");
+        launchWithFx(source, color, () -> runAction(a, item.title));
+    }
+
+    /** Second pill: runs the slide's "secondary" action from banner.json. */
+    private void openHeroApp(final HeroItem item, View source) {
+        final BannerAction a = item.secondary;
+        if (a == null) {
+            return;
+        }
+        int color = BannerAction.CHANNEL.equals(a.type) ? 0xFF0A6FE8
+                : (a.pkg != null ? brandColor(a.pkg) : item.color);
+        if (color == 0) {
+            color = 0xFF15151A;
+        }
+        launchWithFx(source, color, () -> runAction(a, item.title));
+    }
+
+    /** Runs an action; on failure tries its "fallback", then just opens its app. */
+    private boolean runAction(BannerAction a, String title) {
+        if (a == null) {
+            return false;
+        }
+        if (runSingle(a, title)) {
+            return true;
+        }
+        if (a.fallback != null) {
+            return runAction(a.fallback, title);
+        }
+        return !BannerAction.APP.equals(a.type) && a.pkg != null && launchApp(a.pkg);
+    }
+
+    private boolean runSingle(BannerAction a, String title) {
+        switch (a.type) {
+            case BannerAction.LINK: {
+                if (a.uri == null) {
+                    return false;
+                }
+                Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(a.uri))
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                i.setPackage(item.pkg);
-                if (PKG_NETFLIX.equals(item.pkg)) {
-                    i.putExtra("source", "30");
-                }
-                if (tryStart(i)) {
-                    return true;
-                }
-                if (PKG_YOUTUBE.equals(item.pkg)) {
-                    // Any app that handles youtube.com (YouTube for Google TV / SmartTube etc.).
-                    i.setPackage(null);
+                putExtras(i, a);
+                if (a.pkg != null) {
+                    i.setPackage(a.pkg);
                     if (tryStart(i)) {
                         return true;
                     }
+                    if (!a.anyApp) {
+                        return false;
+                    }
+                    i.setPackage(null);
                 }
+                return tryStart(i);
             }
-            if (item.channelNumber != null) {
-                tuneChannel(item);
+            case BannerAction.APP:
+                return a.pkg != null && launchApp(a.pkg);
+            case BannerAction.CHANNEL:
+                if (a.number == null) {
+                    return false;
+                }
+                tuneChannel(a.number, title);
                 return true;
+            case BannerAction.INTENT: {
+                Intent i = new Intent(a.action != null ? a.action : Intent.ACTION_VIEW);
+                if (a.uri != null) {
+                    i.setData(Uri.parse(a.uri));
+                }
+                if (a.pkg != null && a.cls != null) {
+                    i.setComponent(new ComponentName(a.pkg, a.cls));
+                } else if (a.pkg != null) {
+                    i.setPackage(a.pkg);
+                }
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                putExtras(i, a);
+                return tryStart(i);
             }
-            return launchApp(item.pkg);
-        });
-    }
-
-    /** Secondary pill: open the app itself (or Live Channels on the channel number). */
-    private void openHeroApp(final HeroItem item, View source) {
-        if (item.channelNumber != null) {
-            launchWithFx(source, 0xFF0A6FE8, () -> {
-                tuneChannel(item);
-                return true;
-            });
-        } else {
-            launchWithFx(source, brandColor(item.pkg), () -> launchApp(item.pkg));
+            default:
+                return false;
         }
     }
 
-    /** Opens Live Channels on the slide's channel number (e.g. 734). */
-    private void tuneChannel(final HeroItem item) {
-        Uri cached = channelCache.get(item.channelNumber);
+    private static void putExtras(Intent i, BannerAction a) {
+        for (Map.Entry<String, String> e : a.extras.entrySet()) {
+            i.putExtra(e.getKey(), e.getValue());
+        }
+    }
+
+    /** Opens Live Channels on a channel number (e.g. "734"). */
+    private void tuneChannel(final String number, final String title) {
+        Uri cached = channelCache.get(number);
         if (cached != null && openChannel(cached)) {
             return;
         }
         if (!hasTvReadPermission() && !prefs.getBoolean(KEY_TV_PERM_ASKED, false)
                 && Build.VERSION.SDK_INT >= 23) {
             prefs.edit().putBoolean(KEY_TV_PERM_ASKED, true).apply();
-            pendingTune = item;
+            pendingTune = new String[]{number, title};
             requestPermissions(new String[]{PERM_EPG, PERM_LISTINGS}, REQ_TV_PERM);
             return;
         }
         new Thread(() -> {
-            final Uri uri = TvSources.findChannel(this, item.channelNumber);
+            final Uri uri = TvSources.findChannel(this, number);
             handler.post(() -> {
                 if (uri != null) {
-                    channelCache.put(item.channelNumber, uri);
+                    channelCache.put(number, uri);
                     if (openChannel(uri)) {
                         return;
                     }
                 }
-                Toast.makeText(this, "Opening Live Channels. Tune to " + item.channelNumber
-                        + " for " + item.title + ".", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Opening Live Channels. Tune to " + number
+                        + " for " + title + ".", Toast.LENGTH_LONG).show();
                 launchApp(PKG_LIVE);
             });
         }, "channel-lookup").start();
@@ -2396,9 +2521,9 @@ public class HomeActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_TV_PERM && pendingTune != null) {
-            HeroItem item = pendingTune;
+            String[] p = pendingTune;
             pendingTune = null;
-            tuneChannel(item);
+            tuneChannel(p[0], p[1]);
         }
     }
 

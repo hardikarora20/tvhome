@@ -20,6 +20,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
@@ -35,6 +36,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.InputType;
 import android.text.SpannableStringBuilder;
@@ -62,8 +64,6 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.graphics.Canvas;
-import android.os.SystemClock;
 
 import com.gathin.tvhome.R;
 
@@ -114,11 +114,7 @@ public class HomeActivity extends Activity {
     private static final String PKG_HOTSTAR = "in.startv.hotstar";
     private static final String[] DEFAULT_FAVS = {PKG_LIVE, PKG_NETFLIX, PKG_PRIME, PKG_YOUTUBE, PKG_HOTSTAR};
 
-    /** Aaj Tak's official YouTube channel; /live resolves to its current 24x7 stream. */
-    private static final String AAJTAK_LIVE = "https://www.youtube.com/channel/UCt4t-jeY85JegMlZ-E5UWtA/live";
-
-    private static final String DOT = "  \u2022  ";
-
+    /** Banner slides - loaded from banner.json by BannerConfig (see BANNER_JSON_GUIDE.md). */
     private BannerConfig bannerConfig;
     private HeroItem[] items;
     private int bannerGeneration;
@@ -251,7 +247,6 @@ public class HomeActivity extends Activity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         slideMs = bannerSeconds() * 1000L;
-
         bannerConfig = BannerConfig.loadLocal(this);
         items = bannerConfig.items.toArray(new HeroItem[0]);
         artCache = new Bitmap[items.length];
@@ -426,7 +421,7 @@ public class HomeActivity extends Activity {
         return iv;
     }
 
-        /**
+    /**
      * Slide art: an adb override named after the slide id (files/hero/<id>.jpg) first,
      * then the "image" from banner.json. Never touches the network.
      */
@@ -473,7 +468,7 @@ public class HomeActivity extends Activity {
         return Backdrop.blur(small, 3);
     }
 
-     private synchronized Bitmap art(int i) {
+    private synchronized Bitmap art(int i) {
         if (i < 0 || i >= items.length) {
             return placeholder(0);
         }
@@ -586,6 +581,7 @@ public class HomeActivity extends Activity {
         showSlide(0, true, 1);
         preloadSlides();
     }
+
     // ================================================================== hero info
 
     private void buildHeroInfo() {
@@ -636,7 +632,7 @@ public class HomeActivity extends Activity {
         final TextView playText = pillText("Play", Color.WHITE);
         btnPlay.addView(playIcon);
         btnPlay.addView(playText);
-        btnPlay.setBackground(pillBg(0x4D1A1A1E, 0x40FFFFFF));   // same frosted style as the Open button
+        btnPlay.setBackground(pillBg(0x4D1A1A1E, 0x40FFFFFF)); // same frosted style as the Open button
         buttons.addView(btnPlay, new LinearLayout.LayoutParams(-2, -1));
         btnPlay.setOnClickListener(v -> playHero(items[current], v));
         btnPlay.setOnFocusChangeListener((v, f) -> {
@@ -795,7 +791,7 @@ public class HomeActivity extends Activity {
         return w;
     }
 
-     private void updateOpenButton(HeroItem item, boolean animate) {
+    private void updateOpenButton(HeroItem item, boolean animate) {
         BannerAction sec = item.secondary;
         if (sec != null) {
             String label = sec.label;
@@ -2379,7 +2375,7 @@ public class HomeActivity extends Activity {
         dimAnim.start();
     }
 
-     // ================================================================== hero actions
+    // ================================================================== hero actions
 
     /** Play button: runs the slide's "play" action from banner.json. */
     private void playHero(final HeroItem item, View source) {

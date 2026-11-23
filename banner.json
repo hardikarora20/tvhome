@@ -117,6 +117,24 @@
       }
     },
     {
+      "id": "biggboss",
+      "title": "Bigg Boss",
+      "tags": ["JioHotstar", "Reality", "Hindi", "New Episodes Daily"],
+      "image": "https://img10.hotstar.com/image/upload/f_auto,q_auto/sources/r1/cms/prod/998/1788701930998-i",
+      "color": "#4A2BF5",
+      "play": {
+        "type": "link",
+        "uri": "https://www.hotstar.com/in/shows/bigg-boss/1971002586",
+        "package": "in.startv.hotstar"
+      },
+      "secondary": {
+        "label": "Open JioHotstar",
+        "icon": "open",
+        "type": "app",
+        "package": "in.startv.hotstar"
+      }
+    },
+    {
       "id": "live",
       "title": "Live Channels",
       "tags": [

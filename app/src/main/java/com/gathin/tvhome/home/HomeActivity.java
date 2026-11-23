@@ -80,7 +80,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Glassmorphic Android TV home screen (v3.7).
+ * Glassmorphic Android TV home screen (v3.9).
  *
  * Home layout, top to bottom: header -> hero banner -> favourites dock pinned to the bottom.
  * All other apps live below the screen and slide in on D-pad Down from the dock.
@@ -95,6 +95,9 @@ public class HomeActivity extends Activity {
     private static final String KEY_SPEED = "banner_seconds";
     private static final String KEY_DIM_HINT = "dim_hint_shown";
     private static final String KEY_TV_PERM_ASKED = "tv_perm_asked";
+    private static final String KEY_BANNER_SYNCED = "banner_synced_at";
+    /** Automatic remote banner.json check interval. */
+    private static final long BANNER_AUTO_MS = 30 * 60 * 1000L;
     private static final String DEFAULT_NAME = "Hardik";
     private static final int SPEED_MIN = 5;
     private static final int SPEED_MAX = 15;
@@ -120,6 +123,10 @@ public class HomeActivity extends Activity {
     private int bannerGeneration;
     private boolean placeholderVisible;
     private long lastBannerCheck;
+    private boolean bannerFetching;
+    private TextView refreshSub;
+    private ImageView refreshIcon;
+    private ObjectAnimator refreshSpin;
 
     // ------------------------------------------------------------------ motion
 
@@ -308,6 +315,8 @@ public class HomeActivity extends Activity {
         refreshVolume();
         revealHome();
         maybeRefreshBanner();
+        handler.removeCallbacks(bannerAutoCheck);
+        handler.postDelayed(bannerAutoCheck, BANNER_AUTO_MS);
         if (activeMenu == null && shiftedRow < 0) {
             resumeTimer();
         }
@@ -317,6 +326,7 @@ public class HomeActivity extends Activity {
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(ticker);
+        handler.removeCallbacks(bannerAutoCheck);
         pauseTimer();
     }
 
@@ -537,35 +547,128 @@ public class HomeActivity extends Activity {
 
     // ================================================================== banner.json
 
-    /** Called from onResume: picks up a pushed/edited override file, then the remote JSON. */
-    private void maybeRefreshBanner() {
-        if (BannerConfig.overrideStamp(this) != bannerConfig.overrideStamp) {
-            BannerConfig local = BannerConfig.loadLocal(this);
-            if (!local.raw.equals(bannerConfig.raw)) {
-                applyBanner(local);
-            } else {
-                bannerConfig = local;
-            }
+    /** Re-checks the remote banner every 30 minutes while the home screen stays open. */
+    private final Runnable bannerAutoCheck = new Runnable() {
+        @Override
+        public void run() {
+            maybeRefreshBanner();
+            handler.postDelayed(this, BANNER_AUTO_MS);
         }
+    };
+
+    /** Automatic: picks up a pushed/edited override file, then the remote JSON (max every 30 min). */
+    private void maybeRefreshBanner() {
+        reloadLocalIfChanged();
         long now = SystemClock.elapsedRealtime();
-        if (lastBannerCheck != 0 && now - lastBannerCheck < 15 * 60 * 1000L) {
+        if (lastBannerCheck != 0 && now - lastBannerCheck < BANNER_AUTO_MS) {
             return;
         }
-        lastBannerCheck = now;
+        fetchBanner(false);
+    }
+
+    /** Applies the adb override file if it was pushed/edited since the last load. */
+    private boolean reloadLocalIfChanged() {
+        if (BannerConfig.overrideStamp(this) == bannerConfig.overrideStamp) {
+            return false;
+        }
+        BannerConfig local = BannerConfig.loadLocal(this);
+        if (!local.raw.equals(bannerConfig.raw)) {
+            applyBanner(local);
+            return true;
+        }
+        bannerConfig = local;
+        return false;
+    }
+
+    /**
+     * Downloads the remote banner.json. {@code manual} = started from Settings: ignores the
+     * 30-minute throttle and reports the result in the Refresh Banner row.
+     */
+    private void fetchBanner(final boolean manual) {
+        if (bannerFetching) {
+            if (manual) {
+                setRefreshStatus("Checking for updates\u2026", true);
+            }
+            return;
+        }
+        lastBannerCheck = SystemClock.elapsedRealtime();
         final String url = bannerConfig.remoteUrl;
         if (url == null) {
+            if (manual) {
+                boolean changed = reloadLocalIfChanged();
+                setRefreshStatus(changed ? "Banner updated from local file"
+                        : "No remote URL set in banner.json", false);
+            }
             return;
+        }
+        bannerFetching = true;
+        if (manual) {
+            setRefreshStatus("Checking for updates\u2026", true);
         }
         final String shownRaw = bannerConfig.raw;
         new Thread(() -> {
             final BannerConfig fresh = BannerConfig.fetchRemote(this, url);
-            if (fresh == null || fresh.raw.equals(shownRaw)) {
-                return;
+            final boolean changed = fresh != null && !fresh.raw.equals(shownRaw);
+            if (changed) {
+                // Download the new images first so the switch doesn't flash placeholders.
+                BannerConfig.prefetchImages(this, fresh.items.toArray(new HeroItem[0]));
             }
-            // Download the new images first so the switch doesn't flash placeholders.
-            BannerConfig.prefetchImages(this, fresh.items.toArray(new HeroItem[0]));
-            handler.post(() -> applyBanner(fresh));
+            handler.post(() -> {
+                bannerFetching = false;
+                if (fresh != null) {
+                    prefs.edit().putLong(KEY_BANNER_SYNCED, System.currentTimeMillis()).apply();
+                }
+                if (changed) {
+                    applyBanner(fresh);
+                }
+                if (manual) {
+                    if (fresh == null) {
+                        setRefreshStatus("Couldn't reach the server. Try again", false);
+                    } else if (changed) {
+                        setRefreshStatus("Banner updated \u2022 " + fresh.items.size() + " slides", false);
+                    } else {
+                        setRefreshStatus("Already up to date", false);
+                    }
+                } else {
+                    setRefreshStatus(null, false);
+                }
+            });
         }, "banner-refresh").start();
+    }
+
+    /** Updates the Refresh Banner row (if the settings menu exists). null = "Last updated ...". */
+    private void setRefreshStatus(String text, boolean busy) {
+        if (refreshSub == null) {
+            return;
+        }
+        refreshSub.setText(text != null ? text : lastSyncText());
+        if (busy) {
+            if (refreshSpin == null) {
+                refreshSpin = ObjectAnimator.ofFloat(refreshIcon, View.ROTATION, 0f, 360f);
+                refreshSpin.setDuration(900);
+                refreshSpin.setRepeatCount(ValueAnimator.INFINITE);
+                refreshSpin.setInterpolator(new LinearInterpolator());
+            }
+            if (!refreshSpin.isRunning()) {
+                refreshSpin.start();
+            }
+        } else if (refreshSpin != null && refreshSpin.isRunning()) {
+            refreshSpin.cancel();
+            refreshIcon.animate().rotation(0f).setDuration(200).start();
+        }
+    }
+
+    private String lastSyncText() {
+        if (bannerConfig.remoteUrl == null) {
+            return "Local banner.json \u2022 no remote URL";
+        }
+        long at = prefs.getLong(KEY_BANNER_SYNCED, 0L);
+        if (at == 0L) {
+            return "Not synced yet \u2022 auto every 30 min";
+        }
+        long min = Math.max(0, (System.currentTimeMillis() - at) / 60000L);
+        String ago = min < 1 ? "just now" : (min < 60 ? min + " min ago" : (min / 60) + " h ago");
+        return "Last updated " + ago + " \u2022 auto every 30 min";
     }
 
     /** Swaps the whole banner to a new config with the normal slide transition. */
@@ -1757,6 +1860,9 @@ public class HomeActivity extends Activity {
         brightPct.setText(b + "%");
         setSpeedUi(bannerSeconds());
         nameValue.setText(userName());
+        if (!bannerFetching) {
+            setRefreshStatus(null, false);
+        }
         openMenu(settingsMenu, btnSettings, BELOW_RIGHT_EDGE);
     }
 
@@ -1804,6 +1910,12 @@ public class HomeActivity extends Activity {
         pencil.setAlpha(0.8f);
         nameRow.addView(pencil);
         nameRow.setOnClickListener(v -> editUserName());
+
+        // Refresh Banner: fetch the remote banner.json now (auto-refresh runs every 30 min).
+        LinearLayout refresh = labelRow(m, R.drawable.ic_h_refresh, "Refresh Banner", lastSyncText(), 0);
+        refreshIcon = (ImageView) refresh.getChildAt(0);
+        refreshSub = (TextView) ((LinearLayout) refresh.getChildAt(1)).getChildAt(1);
+        refresh.setOnClickListener(v -> fetchBanner(true));
 
         menuDivider(m);
         LinearLayout sys = labelRow(m, R.drawable.ic_h_settings, "System Settings", null,

@@ -5,7 +5,7 @@
 |---|---|---|
 | 1 | `Android/data/com.gathin.tvhome/files/banner.json` | `adb push banner.json /sdcard/Android/data/com.gathin.tvhome/files/banner.json`, then press **Home** |
 | 2 | `app/src/main/assets/banner.json` (bundled) | Edit and rebuild |
-| + | `"remote"` URL inside the active file | Host the JSON (GitHub raw / Gist / any https). Fetched when the launcher opens, re-checked at most every 15 min on return to Home, cached for offline |
+| + | `"remote"` URL inside the active file | Host the JSON (GitHub raw / Gist / any https). Fetched when the launcher opens, then automatically every 30 min, or instantly via **Settings > Refresh Banner**. Cached for offline |
 
 A broken file is ignored and the next source is used, so the banner never goes blank.
 

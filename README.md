@@ -37,3 +37,11 @@ ids: anupamaa, yrkkh, kapil, aajtak, syhp, yft, live
 | Remote images | `"image": "https://..."` is downloaded once and cached; a colour gradient shows until it arrives. |
 | Manifest | Added INTERNET permission (only used for remote JSON/images). |
 
+
+### v3.9 changes
+| Area | Change |
+|---|---|
+| Refresh Banner | New Settings row (above System Settings). Fetches the remote banner.json immediately, with a spinning icon and a result line: "Banner updated", "Already up to date" or "Couldn't reach the server". When idle it shows "Last updated X min ago". |
+| Auto update | Remote banner.json is checked every 30 min (was 15), including while the home screen stays open, and when you return Home after 30 min. |
+| Fresh fetch | Requests add a timestamp parameter so GitHub's raw CDN cache doesn't return an old copy. |
+

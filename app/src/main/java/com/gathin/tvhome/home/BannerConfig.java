@@ -35,7 +35,7 @@ import java.util.Map;
  *   1. Override file  : Android/data/com.gathin.tvhome/files/banner.json  (adb push, no rebuild)
  *   2. Bundled file   : app/src/main/assets/banner.json
  * If the active file has a "remote" URL, the launcher downloads that JSON on open (and at most
- * every 15 minutes after), caches it, and switches the banner to it. The cached copy is shown
+ * every 30 minutes after, or on demand from Settings > Refresh Banner), caches it, and switches the banner to it. The cached copy is shown
  * instantly on the next start, so the banner works offline too.
  *
  * Remote images are downloaded in the background and cached in files/hero_cache/.
@@ -102,7 +102,8 @@ final class BannerConfig {
     /** Downloads, validates and caches the remote JSON. Background thread only. Null on failure. */
     static BannerConfig fetchRemote(Context ctx, String url) {
         try {
-            byte[] body = httpGet(url, MAX_JSON);
+            String sep = url.indexOf('?') >= 0 ? "&" : "?";
+            byte[] body = httpGet(url + sep + "_ts=" + System.currentTimeMillis(), MAX_JSON);
             String raw = new String(body, UTF8);
             BannerConfig c = parse(raw, "remote");
             if (c == null) {

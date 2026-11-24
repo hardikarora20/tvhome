@@ -1,5 +1,4 @@
 {
-  "remote": "https://raw.githubusercontent.com/hardikarora20/tvhome/refs/heads/main/banner.json",
   "slides": [
     {
       "id": "anupamaa",
@@ -118,12 +117,48 @@
       }
     },
     {
+      "id": "biggboss",
+      "title": "Bigg Boss",
+      "tags": ["JioHotstar", "Reality", "Hindi", "New Episodes Daily"],
+      "image": "https://img10.hotstar.com/image/upload/f_auto,q_auto/sources/r1/cms/prod/998/1788701930998-i",
+      "color": "#4A2BF5",
+      "play": {
+        "type": "link",
+        "uri": "https://www.hotstar.com/in/shows/bigg-boss/1971002586",
+        "package": "in.startv.hotstar"
+      },
+      "secondary": {
+        "label": "Open JioHotstar",
+        "icon": "open",
+        "type": "app",
+        "package": "in.startv.hotstar"
+      }
+    },
+    {
+      "id": "loki",
+      "title": "Loki",
+      "tags": ["JioHotstar", "2 Seasons", "Sci-Fi Action", "English / Hindi"],
+      "image": "https://img1.hotstarext.com/image/upload/f_auto/sources/r1/cms/prod/7033/1607033-i-d6f937c102ac",
+      "color": "#4A2BF5",
+      "play": {
+        "type": "link",
+        "uri": "https://www.hotstar.com/in/shows/loki/1260063451",
+        "package": "in.startv.hotstar"
+      },
+      "secondary": {
+        "label": "Open JioHotstar",
+        "icon": "open",
+        "type": "app",
+        "package": "in.startv.hotstar"
+      }
+    },
+    {
       "id": "live",
       "title": "Live Channels",
       "tags": [
         "Live Channels App",
         "Live TV",
-        "All your channels in one place"
+        "All your live channels in one place"
       ],
       "image": "res:hero_live",
       "color": "#0A6FE8",

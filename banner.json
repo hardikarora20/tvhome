@@ -3,18 +3,17 @@
     {
       "id": "anupamaa",
       "title": "Anupamaa",
-      "tags": ["JioHotstar", "Family Drama", "Hindi", "New Episodes Daily"],
+      "tags": [
+        "JioHotstar",
+        "Family Drama",
+        "Hindi",
+        "New Episodes Daily"
+      ],
       "image": "res:hero_anupamaa",
       "color": "#4A2BF5",
       "play": {
         "type": "link",
         "uri": "https://www.hotstar.com/in/shows/anupama/1260022017",
-        "package": "in.startv.hotstar"
-      },
-      "secondary": {
-        "label": "Open JioHotstar",
-        "icon": "open",
-        "type": "app",
         "package": "in.startv.hotstar"
       }
     },
@@ -33,37 +32,36 @@
         "type": "link",
         "uri": "https://www.hotstar.com/in/shows/yeh-rishta/586",
         "package": "in.startv.hotstar"
-      },
-      "secondary": {
-        "label": "Open JioHotstar",
-        "icon": "open",
-        "type": "app",
-        "package": "in.startv.hotstar"
       }
     },
     {
       "id": "kapil",
       "title": "The Great Indian Kapil Show",
-      "tags": ["Netflix", "5 Seasons", "Comedy Talk Show", "Hindi"],
+      "tags": [
+        "Netflix",
+        "5 Seasons",
+        "Comedy Talk Show",
+        "Hindi"
+      ],
       "image": "res:hero_kapil",
       "color": "#B20710",
       "play": {
         "type": "link",
         "uri": "https://www.netflix.com/title/81737430",
         "package": "com.netflix.ninja",
-        "extras": { "source": "30" }
-      },
-      "secondary": {
-        "label": "Open Netflix",
-        "icon": "open",
-        "type": "app",
-        "package": "com.netflix.ninja"
+        "extras": {
+          "source": "30"
+        }
       }
     },
     {
       "id": "aajtak",
       "title": "Aaj Tak",
-      "tags": ["Live Stream", "Hindi News", "24x7", "Channel 4"],
+      "tags": [
+        "Live Stream",
+        "Hindi News",
+        "24x7"
+      ],
       "image": "res:hero_aajtak",
       "color": "#C8102E",
       "play": {
@@ -71,84 +69,77 @@
         "uri": "https://www.youtube.com/channel/UCt4t-jeY85JegMlZ-E5UWtA/live",
         "package": "com.google.android.youtube.tv",
         "anyApp": true,
-        "fallback": { "type": "channel", "number": "4" }
-      },
-      "secondary": {
-        "label": "Channel 4",
-        "icon": "live",
-        "type": "channel",
-        "number": "4"
+        "fallback": {
+          "type": "channel",
+          "number": "4"
+        }
       }
     },
     {
       "id": "syhp",
       "title": "Shayad Yahi Hai Pyaar",
-      "tags": ["JioHotstar", "Romance", "Hindi", "New Episodes"],
+      "tags": [
+        "JioHotstar",
+        "Romance",
+        "Hindi",
+        "New Episodes"
+      ],
       "image": "res:hero_syhp",
       "color": "#4A2BF5",
       "play": {
         "type": "link",
         "uri": "https://www.hotstar.com/in/shows/shayad-yahi-hai-pyaar/1271646563",
         "package": "in.startv.hotstar"
-      },
-      "secondary": {
-        "label": "Open JioHotstar",
-        "icon": "open",
-        "type": "app",
-        "package": "in.startv.hotstar"
       }
     },
     {
       "id": "yft",
       "title": "Yeh Fitoor Tera",
-      "tags": ["JioHotstar", "Romance Drama", "Hindi", "New Episodes"],
+      "tags": [
+        "JioHotstar",
+        "Romance Drama",
+        "Hindi",
+        "New Episodes"
+      ],
       "image": "res:hero_yft",
       "color": "#4A2BF5",
       "play": {
         "type": "link",
         "uri": "https://www.hotstar.com/in/shows/yeh-fitoor-tera/1271650854",
         "package": "in.startv.hotstar"
-      },
-      "secondary": {
-        "label": "Open JioHotstar",
-        "icon": "open",
-        "type": "app",
-        "package": "in.startv.hotstar"
       }
     },
     {
       "id": "biggboss",
       "title": "Bigg Boss",
-      "tags": ["JioHotstar", "Reality", "Hindi", "New Episodes Daily"],
+      "tags": [
+        "JioHotstar",
+        "Reality",
+        "Hindi",
+        "New Episodes Daily"
+      ],
       "image": "https://img10.hotstar.com/image/upload/f_auto,q_auto/sources/r1/cms/prod/998/1788701930998-i",
       "color": "#4A2BF5",
       "play": {
         "type": "link",
         "uri": "https://www.hotstar.com/in/shows/bigg-boss/1971002586",
         "package": "in.startv.hotstar"
-      },
-      "secondary": {
-        "label": "Open JioHotstar",
-        "icon": "open",
-        "type": "app",
-        "package": "in.startv.hotstar"
       }
     },
     {
       "id": "loki",
       "title": "Loki",
-      "tags": ["JioHotstar", "2 Seasons", "Sci-Fi Action", "English / Hindi"],
+      "tags": [
+        "JioHotstar",
+        "2 Seasons",
+        "Sci-Fi Action",
+        "English / Hindi"
+      ],
       "image": "https://img1.hotstarext.com/image/upload/f_auto/sources/r1/cms/prod/7033/1607033-i-d6f937c102ac",
       "color": "#4A2BF5",
       "play": {
         "type": "link",
         "uri": "https://www.hotstar.com/in/shows/loki/1260063451",
-        "package": "in.startv.hotstar"
-      },
-      "secondary": {
-        "label": "Open JioHotstar",
-        "icon": "open",
-        "type": "app",
         "package": "in.startv.hotstar"
       }
     },
@@ -162,8 +153,10 @@
       ],
       "image": "res:hero_live",
       "color": "#0A6FE8",
-      "play": { "type": "app", "package": "com.google.android.tv" },
-      "secondary": null
+      "play": {
+        "type": "app",
+        "package": "com.google.android.tv"
+      }
     }
   ]
 }

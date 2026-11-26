@@ -64,3 +64,32 @@ Live Channels `com.google.android.tv`
   "secondary": { "label": "Open Netflix", "package": "com.netflix.ninja" }
 }
 ```
+
+
+---
+
+## play.json - the background stream
+
+Used by the play/pause button in the top bar. Same rules as banner.json.
+
+| Priority | Location |
+|---|---|
+| 1 | `/sdcard/Android/data/com.gathin.tvhome/files/play.json` (adb push, then press Home) |
+| 2 | `app/src/main/assets/play.json` (bundled) |
+| 3 | Built-in default: AIR Live |
+| + | `"remote"` URL - fetched on open, every 30 min, and from Settings > Refresh Banner & Stream |
+
+```json
+{
+  "remote": "https://raw.githubusercontent.com/hardikarora20/tvhome/refs/heads/main/play.json",
+  "title": "AIR Live",
+  "url": "http://air.pc.cdn.bitgravity.com/air/live/pbaudio001/chunklist.m3u8"
+}
+```
+| Key | Meaning |
+|---|---|
+| `title` | Name shown in the tooltip and the notification |
+| `url` | The stream: HLS `.m3u8`, `.mp3` or `.aac`, over http or https |
+| `remote` | Optional online copy of this file |
+
+To change the station, edit `url` in the repo-root `play.json` and push. The TV picks it up within 30 min, or straight away with Refresh.

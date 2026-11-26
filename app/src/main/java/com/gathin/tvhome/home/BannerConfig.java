@@ -394,7 +394,7 @@ final class BannerConfig {
         return c;
     }
 
-    private static byte[] httpGet(String url, int max) throws IOException {
+    static byte[] httpGet(String url, int max) throws IOException {
         HttpURLConnection c = open(url);
         try (InputStream in = c.getInputStream()) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -427,7 +427,7 @@ final class BannerConfig {
         }
     }
 
-    private static String readFile(File f) {
+    static String readFile(File f) {
         if (f == null || !f.isFile()) {
             return null;
         }
@@ -440,7 +440,7 @@ final class BannerConfig {
         }
     }
 
-    private static String readAsset(Context ctx, String name) {
+    static String readAsset(Context ctx, String name) {
         try (InputStream in = ctx.getAssets().open(name)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             copy(in, out, MAX_JSON);
@@ -450,7 +450,7 @@ final class BannerConfig {
         }
     }
 
-    private static void writeFile(File f, String s) {
+    static void writeFile(File f, String s) {
         File tmp = new File(f.getPath() + ".tmp");
         try (OutputStream out = new FileOutputStream(tmp)) {
             out.write(s.getBytes(UTF8));

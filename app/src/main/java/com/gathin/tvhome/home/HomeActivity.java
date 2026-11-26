@@ -80,7 +80,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Glassmorphic Android TV home screen (v3.9).
+ * Glassmorphic Android TV home screen (v4.0).
  *
  * Home layout, top to bottom: header -> hero banner -> favourites dock pinned to the bottom.
  * All other apps live below the screen and slide in on D-pad Down from the dock.
@@ -165,7 +165,11 @@ public class HomeActivity extends Activity {
     private TextView tooltip;
     private FrameLayout btnInputs;
     private FrameLayout btnWifi;
-    private FrameLayout btnSleep;
+    private FrameLayout btnStream;
+    private ImageView streamIcon;
+    private ObjectAnimator streamPulse;
+    private StreamConfig streamConfig;
+    private boolean streamFetching;
     private FrameLayout btnSettings;
     private View vpnDot;
 
@@ -255,6 +259,7 @@ public class HomeActivity extends Activity {
         audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         slideMs = bannerSeconds() * 1000L;
         bannerConfig = BannerConfig.loadLocal(this);
+        streamConfig = StreamConfig.loadLocal(this);
         items = bannerConfig.items.toArray(new HeroItem[0]);
         artCache = new Bitmap[items.length];
         blurCache = new Bitmap[items.length];
@@ -296,14 +301,11 @@ public class HomeActivity extends Activity {
         showSlide(0, false, 1);
         preloadSlides();
         rebuildApps(null);
-        handler.post(() -> {
-            if (!dockTiles.isEmpty()) {
-                dockTiles.get(0).requestFocus();
-            } else {
-                btnPlay.requestFocus();
-            }
-        });
+        // Start on the banner's Play button so a show can be played straight away.
+        handler.post(() -> btnPlay.requestFocus());
         registerPackageReceiver();
+        StreamService.addListener(streamListener);
+        onStreamState(StreamService.state());
     }
 
     @Override
@@ -315,6 +317,7 @@ public class HomeActivity extends Activity {
         refreshVolume();
         revealHome();
         maybeRefreshBanner();
+        onStreamState(StreamService.state());
         handler.removeCallbacks(bannerAutoCheck);
         handler.postDelayed(bannerAutoCheck, BANNER_AUTO_MS);
         if (activeMenu == null && shiftedRow < 0) {
@@ -334,6 +337,7 @@ public class HomeActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         handler.removeCallbacksAndMessages(null);
+        StreamService.removeListener(streamListener);
         if (slideTimer != null) {
             slideTimer.removeAllListeners();
             slideTimer.cancel();
@@ -559,6 +563,7 @@ public class HomeActivity extends Activity {
     /** Automatic: picks up a pushed/edited override file, then the remote JSON (max every 30 min). */
     private void maybeRefreshBanner() {
         reloadLocalIfChanged();
+        reloadStreamIfChanged();
         long now = SystemClock.elapsedRealtime();
         if (lastBannerCheck != 0 && now - lastBannerCheck < BANNER_AUTO_MS) {
             return;
@@ -585,6 +590,7 @@ public class HomeActivity extends Activity {
      * 30-minute throttle and reports the result in the Refresh Banner row.
      */
     private void fetchBanner(final boolean manual) {
+        fetchStream();
         if (bannerFetching) {
             if (manual) {
                 setRefreshStatus("Checking for updates\u2026", true);
@@ -669,6 +675,97 @@ public class HomeActivity extends Activity {
         long min = Math.max(0, (System.currentTimeMillis() - at) / 60000L);
         String ago = min < 1 ? "just now" : (min < 60 ? min + " min ago" : (min / 60) + " h ago");
         return "Last updated " + ago + " \u2022 auto every 30 min";
+    }
+
+    // ================================================================== background stream (play.json)
+
+    private final StreamService.Listener streamListener = st -> {
+        onStreamState(st);
+        if (st == StreamService.ERROR && hasWindowFocus()) {
+            Toast.makeText(this, "Couldn't play " + streamConfig.title + ". Check the link in play.json",
+                    Toast.LENGTH_SHORT).show();
+        }
+    };
+
+    /** Top-bar play button: starts / stops the play.json stream in the background. */
+    private void toggleStream() {
+        if (StreamService.isActive()) {
+            StreamService.stop(this);
+            onStreamState(StreamService.IDLE);
+        } else {
+            onStreamState(StreamService.BUFFERING);
+            StreamService.play(this, streamConfig.url, streamConfig.title);
+        }
+    }
+
+    /** Play icon when stopped, pause icon (gently pulsing while buffering) when playing. */
+    private void onStreamState(int st) {
+        if (streamIcon == null) {
+            return;
+        }
+        boolean active = st == StreamService.PLAYING || st == StreamService.BUFFERING;
+        streamIcon.setImageResource(active ? R.drawable.ic_h_pause : R.drawable.ic_h_play);
+        String label = streamConfig.title + (st == StreamService.PLAYING ? " \u2022 Playing"
+                : st == StreamService.BUFFERING ? " \u2022 Connecting\u2026"
+                : st == StreamService.ERROR ? " \u2022 Couldn't play" : "");
+        btnStream.setTag(label);
+        btnStream.setContentDescription(active ? "Pause " + streamConfig.title : "Play " + streamConfig.title);
+        if (btnStream.isFocused()) {
+            showTooltip(btnStream, true);
+        }
+        if (st == StreamService.BUFFERING) {
+            if (streamPulse == null) {
+                streamPulse = ObjectAnimator.ofFloat(streamIcon, View.ALPHA, 1f, 0.35f);
+                streamPulse.setDuration(650);
+                streamPulse.setRepeatMode(ValueAnimator.REVERSE);
+                streamPulse.setRepeatCount(ValueAnimator.INFINITE);
+            }
+            if (!streamPulse.isRunning()) {
+                streamPulse.start();
+            }
+        } else {
+            if (streamPulse != null) {
+                streamPulse.cancel();
+            }
+            streamIcon.setAlpha(1f);
+        }
+    }
+
+    /** Picks up an adb-pushed play.json. */
+    private void reloadStreamIfChanged() {
+        if (StreamConfig.overrideStamp(this) != streamConfig.overrideStamp) {
+            applyStream(StreamConfig.loadLocal(this));
+        }
+    }
+
+    /** Fetches the remote play.json (same schedule as the banner: open, every 30 min, Refresh). */
+    private void fetchStream() {
+        final String url = streamConfig.remoteUrl;
+        if (url == null || streamFetching) {
+            return;
+        }
+        streamFetching = true;
+        final String shownRaw = streamConfig.raw;
+        new Thread(() -> {
+            final StreamConfig fresh = StreamConfig.fetchRemote(this, url);
+            handler.post(() -> {
+                streamFetching = false;
+                if (fresh != null && !fresh.raw.equals(shownRaw)) {
+                    applyStream(fresh);
+                }
+            });
+        }, "stream-refresh").start();
+    }
+
+    /** Switches to a new stream config; if the old link was playing, the new one starts. */
+    private void applyStream(StreamConfig fresh) {
+        boolean wasPlaying = StreamService.isActive();
+        boolean urlChanged = !fresh.url.equals(streamConfig.url);
+        streamConfig = fresh;
+        if (wasPlaying && urlChanged) {
+            StreamService.play(this, fresh.url, fresh.title);
+        }
+        onStreamState(StreamService.state());
     }
 
     /** Swaps the whole banner to a new config with the normal slide transition. */
@@ -1397,9 +1494,7 @@ public class HomeActivity extends Activity {
         rlp.rightMargin = margin;
         header.addView(right, rlp);
 
-        btnInputs = circleButton(R.drawable.ic_h_input, 40, 20, "Inputs");
-        right.addView(btnInputs);
-
+        // Order: Wi-Fi, Play stream, Inputs, Settings.
         btnWifi = circleButton(R.drawable.ic_h_wifi, 40, 20, "Wi-Fi");
         vpnDot = new View(this);
         GradientDrawable green = new GradientDrawable();
@@ -1412,12 +1507,16 @@ public class HomeActivity extends Activity {
         dlp.rightMargin = dp(7);
         dlp.bottomMargin = dp(7);
         btnWifi.addView(vpnDot, dlp);
-        ((LinearLayout.LayoutParams) btnWifi.getLayoutParams()).leftMargin = dp(16);
         right.addView(btnWifi);
 
-        btnSleep = circleButton(R.drawable.ic_h_sleep, 40, 19, "Screensaver");
-        ((LinearLayout.LayoutParams) btnSleep.getLayoutParams()).leftMargin = dp(16);
-        right.addView(btnSleep);
+        btnStream = circleButton(R.drawable.ic_h_play, 40, 20, streamConfig.title);
+        streamIcon = (ImageView) btnStream.getChildAt(0);
+        ((LinearLayout.LayoutParams) btnStream.getLayoutParams()).leftMargin = dp(16);
+        right.addView(btnStream);
+
+        btnInputs = circleButton(R.drawable.ic_h_input, 40, 20, "Inputs");
+        ((LinearLayout.LayoutParams) btnInputs.getLayoutParams()).leftMargin = dp(16);
+        right.addView(btnInputs);
 
         btnSettings = circleButton(R.drawable.ic_h_settings, 40, 22, "Settings");
         ((LinearLayout.LayoutParams) btnSettings.getLayoutParams()).leftMargin = dp(16);
@@ -1463,7 +1562,7 @@ public class HomeActivity extends Activity {
                 openSystemSettings();
             }
         });
-        btnSleep.setOnClickListener(v -> launchWithFx(v, Color.BLACK, this::startScreensaver));
+        btnStream.setOnClickListener(v -> toggleStream());
         btnSettings.setOnClickListener(v -> openSettingsMenu());
         updateGreeting();
     }
@@ -1911,8 +2010,12 @@ public class HomeActivity extends Activity {
         nameRow.addView(pencil);
         nameRow.setOnClickListener(v -> editUserName());
 
-        // Refresh Banner: fetch the remote banner.json now (auto-refresh runs every 30 min).
-        LinearLayout refresh = labelRow(m, R.drawable.ic_h_refresh, "Refresh Banner", lastSyncText(), 0);
+        // Screensaver (moved here from the top bar).
+        LinearLayout saver = labelRow(m, R.drawable.ic_h_sleep, "Screensaver", "Start now", 0);
+        saver.setOnClickListener(v -> launchWithFx(v, Color.BLACK, this::startScreensaver));
+
+        // Refresh: fetch the remote banner.json + play.json now (auto-refresh runs every 30 min).
+        LinearLayout refresh = labelRow(m, R.drawable.ic_h_refresh, "Refresh Banner & Stream", lastSyncText(), 0);
         refreshIcon = (ImageView) refresh.getChildAt(0);
         refreshSub = (TextView) ((LinearLayout) refresh.getChildAt(1)).getChildAt(1);
         refresh.setOnClickListener(v -> fetchBanner(true));
@@ -2240,11 +2343,7 @@ public class HomeActivity extends Activity {
         }
         if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE) {
             if (down && event.getRepeatCount() == 0) {
-                if (!dockTiles.isEmpty()) {
-                    dockTiles.get(0).requestFocus();
-                } else {
-                    btnPlay.requestFocus();
-                }
+                btnPlay.requestFocus();
                 scrollToRow(-1);
             }
             return true;
@@ -2387,7 +2486,7 @@ public class HomeActivity extends Activity {
 
     private List<List<View>> navRows() {
         List<List<View>> rows = new ArrayList<>();
-        rows.add(Arrays.<View>asList(btnInputs, btnWifi, btnSleep, btnSettings));
+        rows.add(Arrays.<View>asList(btnWifi, btnStream, btnInputs, btnSettings));
         List<View> hero = new ArrayList<>();
         hero.add(btnPlay);
         if (btnOpen.getVisibility() == View.VISIBLE) {

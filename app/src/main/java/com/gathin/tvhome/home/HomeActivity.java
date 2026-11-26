@@ -682,7 +682,7 @@ public class HomeActivity extends Activity {
     private final StreamService.Listener streamListener = st -> {
         onStreamState(st);
         if (st == StreamService.ERROR && hasWindowFocus()) {
-            Toast.makeText(this, "Couldn't play " + streamConfig.title + ". Check the link in play.json",
+            Toast.makeText(this, "Couldn't play " + streamConfig.title + ". " + (StreamService.lastError() != null ? StreamService.lastError() : "Check the link in play.json"),
                     Toast.LENGTH_SHORT).show();
         }
     };

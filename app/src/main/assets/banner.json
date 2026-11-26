@@ -1,5 +1,9 @@
 {
+<<<<<<< HEAD
   "remote": "https://raw.githubusercontent.com/hardikarora20/tvhome/refs/heads/main/banner.json",
+=======
+  "remote": "https://raw.githubusercontent.com/hardikarora20/tvhome/refs/heads/main/banner.json?token=GHSAT0AAAAAAERPBL5MBEF7PTAZJNRQBWX22YEDIZA",
+>>>>>>> 42ff827 (added stream)
   "slides": [
     {
       "id": "anupamaa",
